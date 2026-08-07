@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.googleusercontent.com; connect-src 'self' https://sheets.googleapis.com https://www.googleapis.com https://oauth2.googleapis.com https://accounts.google.com; frame-src https://accounts.google.com; base-uri 'self'; form-action 'self';">
+<title>Gym Log</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0f1113">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Gym Log">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" href="icons/icon-192.png">
+<style>
+  :root{
+    --bg:#0f1113;
+    --panel:#17191c;
+    --panel-2:#1e2124;
+    --line:#2a2d31;
+    --text:#ececee;
+    --muted:#8b9199;
+    --accent:#ff5a1f;
+    --accent-dim:#7a2c10;
+    --blue:#4da8ff;
+    --mono: ui-monospace, "SF Mono", "Roboto Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; padding:0; background:var(--bg); color:var(--text); font-family:var(--sans); -webkit-font-smoothing:antialiased;}
+  body{padding-bottom:60px;}
+
+  header{
+    position:sticky; top:0; z-index:10;
+    background:linear-gradient(180deg, var(--bg) 80%, transparent);
+    padding:18px 16px 8px;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  header h1{
+    font-size:15px; letter-spacing:3px; text-transform:uppercase;
+    font-weight:800; margin:0; color:var(--muted);
+  }
+  header .dot{color:var(--accent);}
+  .gear-btn{
+    background:none; border:none; color:var(--muted); font-size:19px;
+    padding:4px 6px; line-height:1;
+  }
+
+  /* Settings panel (Google account + sync) */
+  .settings-panel{
+    display:none;
+    margin:0 16px 20px;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:16px;
+  }
+  .settings-panel.open{display:block;}
+  .settings-panel label{
+    font-size:11px; letter-spacing:2px; text-transform:uppercase;
+    color:var(--muted); font-weight:700; display:block; margin-bottom:8px;
+  }
+  .settings-panel input{
+    width:100%; background:var(--panel-2); border:1px solid var(--line);
+    border-radius:8px; color:var(--text); font-family:var(--mono);
+    font-size:13px; padding:10px; outline:none; margin-bottom:10px;
+  }
+  .settings-panel input:focus{border-color:var(--blue);}
+  .settings-row{display:flex; gap:8px; margin-bottom:4px;}
+  .settings-row button{flex:1;}
+  .settings-hint{font-size:11px; color:var(--muted); line-height:1.5; margin:2px 0 14px;}
+  .settings-hint a{color:var(--blue);}
+  .settings-divider{border:none; border-top:1px solid var(--line); margin:14px 0;}
+  .account-row{display:flex; align-items:center; gap:10px; margin-bottom:12px;}
+  .account-avatar{width:34px; height:34px; border-radius:50%; background:var(--panel-2); border:1px solid var(--line); flex-shrink:0; object-fit:cover;}
+  .account-info{flex:1; min-width:0;}
+  .account-email{font-size:13px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .account-sub{font-size:11px; color:var(--muted);}
+  .unit-toggle{display:flex; gap:8px; margin-bottom:14px;}
+  .unit-toggle button{flex:1; padding:9px;}
+  .unit-toggle button.active{background:var(--blue); color:#04121f; border-color:var(--blue);}
+  .sync-status{font-size:12px; margin-top:10px; color:var(--muted); line-height:1.6;}
+  .sync-status.ok{color:#5fd88f;}
+  .sync-status.err{color:#ff6b6b;}
+  .sync-badge{
+    display:inline-block; width:7px; height:7px; border-radius:50%;
+    background:var(--muted); margin-right:6px; vertical-align:middle;
+  }
+  .sync-badge.connected{background:#5fd88f;}
+  .sync-badge.warn{background:#e6b34d;}
+  .sheet-link{display:inline-block; margin-top:8px; font-size:12px; color:var(--blue); text-decoration:none;}
+
+  /* TIMER */
+  .timer-block{
+    margin:0 16px 20px;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:20px 16px 16px;
+    text-align:center;
+  }
+  .timer-label{
+    font-size:11px; letter-spacing:3px; text-transform:uppercase;
+    color:var(--muted); font-weight:700; margin-bottom:6px;
+  }
+  .timer-display{
+    font-family:var(--mono);
+    font-variant-numeric:tabular-nums;
+    font-size:56px; font-weight:600; letter-spacing:1px;
+    color:var(--text);
+    line-height:1;
+    transition:color .2s;
+  }
+  .timer-display.running{color:var(--blue); text-shadow:0 0 18px rgba(77,168,255,.35);}
+  .timer-controls{display:flex; gap:10px; justify-content:center; margin-top:16px;}
+  .timer-controls button{flex:1; max-width:140px;}
+
+  button{
+    font-family:var(--sans); font-weight:700; font-size:14px;
+    border:none; border-radius:10px; padding:13px 16px;
+    cursor:pointer; color:var(--text);
+    background:var(--panel-2);
+    border:1px solid var(--line);
+  }
+  button:active{transform:scale(0.97);}
+  button:disabled{opacity:0.5;}
+  .btn-primary{background:var(--blue); color:#04121f; border-color:var(--blue);}
+  .btn-stop{background:var(--accent); color:#210a00; border-color:var(--accent);}
+  .btn-ghost{background:transparent; color:var(--muted); border:1px solid var(--line);}
+  .btn-danger{background:transparent; color:#ff6b6b; border:1px solid #3a2222;}
+
+  section{margin:0 16px 20px;}
+  .section-title{
+    font-size:11px; letter-spacing:3px; text-transform:uppercase;
+    color:var(--muted); font-weight:700; margin:0 0 10px 4px;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+
+  /* Exercise cards */
+  .exercise{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:14px;
+    margin-bottom:12px;
+  }
+  .exercise-head{display:flex; gap:8px; align-items:center; margin-bottom:12px;}
+  .exercise-name{
+    flex:1; background:transparent; border:none; border-bottom:2px solid var(--line);
+    color:var(--text); font-size:19px; font-weight:800; text-transform:uppercase;
+    letter-spacing:0.5px; padding:6px 2px; outline:none;
+  }
+  .exercise-name:focus{border-bottom-color:var(--accent);}
+  .exercise-name::placeholder{color:#4a4e54; text-transform:none; font-weight:600;}
+  .remove-exercise{background:none; border:none; color:var(--muted); font-size:18px; padding:4px 8px; line-height:1;}
+
+  .set-row{display:grid; grid-template-columns:22px 1fr 1fr 30px; gap:8px; align-items:center; margin-bottom:8px;}
+  .set-num{font-family:var(--mono); color:var(--muted); font-size:13px; text-align:center;}
+  .set-field{display:flex; flex-direction:column;}
+  .set-field label{font-size:9px; letter-spacing:1.5px; color:var(--muted); margin-bottom:3px; margin-left:2px;}
+  .set-field input{
+    background:var(--panel-2); border:1px solid var(--line); border-radius:8px;
+    color:var(--text); font-family:var(--mono); font-size:16px; padding:9px 8px; width:100%; outline:none;
+  }
+  .set-field input:focus{border-color:var(--blue);}
+  .remove-set{background:none; border:none; color:#5a5e64; font-size:16px;}
+
+  .add-set-btn{
+    width:100%; margin-top:4px; background:var(--panel-2); color:var(--accent);
+    border:1px dashed var(--accent-dim); font-size:20px; font-weight:800; padding:9px; border-radius:8px;
+  }
+  .add-exercise-btn{width:100%; padding:15px; font-size:15px; background:var(--panel); border:1px dashed var(--line); color:var(--muted);}
+  .save-workout-btn{width:100%; margin-top:14px; padding:16px; font-size:15px; letter-spacing:1px; text-transform:uppercase;}
+  .empty-note{color:var(--muted); font-size:13px; text-align:center; padding:20px 10px;}
+
+  /* Calendar */
+  .calendar-card{
+    background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px;
+  }
+  .cal-nav{display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;}
+  .cal-nav-btn{background:var(--panel-2); border:1px solid var(--line); padding:8px 14px; font-size:16px; font-weight:800;}
+  .cal-month-label{font-size:14px; font-weight:800; letter-spacing:1px; text-transform:uppercase;}
+  .cal-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:4px;}
+  .cal-dow{font-size:10px; color:var(--muted); text-align:center; font-weight:700; padding-bottom:4px;}
+  .cal-day{
+    aspect-ratio:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    border-radius:8px; font-family:var(--mono); font-size:13px; color:var(--text);
+    background:var(--panel-2); border:1px solid transparent; position:relative;
+  }
+  .cal-day.empty{background:transparent;}
+  .cal-day.has-workout{border-color:var(--accent-dim); cursor:pointer;}
+  .cal-day.has-workout .cal-dot{width:5px; height:5px; border-radius:50%; background:var(--accent); margin-top:2px;}
+  .cal-day.rest-day .cal-dot-rest{width:4px; height:4px; border-radius:50%; border:1px solid var(--line); margin-top:2px;}
+  .cal-day.today{outline:1px solid var(--blue);}
+  .cal-day:not(.has-workout):not(.empty){color:var(--muted);}
+  .cal-legend{display:flex; gap:16px; justify-content:center; margin-top:12px; font-size:11px; color:var(--muted);}
+  .cal-legend span{display:inline-flex; align-items:center; gap:5px;}
+  .legend-dot{width:6px; height:6px; border-radius:50%; background:var(--accent); display:inline-block;}
+  .legend-dot.rest{background:transparent; border:1px solid var(--line);}
+
+  /* Day detail panel */
+  .day-detail{
+    display:none;
+    margin-top:14px;
+    border-top:1px solid var(--line);
+    padding-top:14px;
+  }
+  .day-detail.open{display:block;}
+  .day-detail-title{font-size:13px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--accent); margin-bottom:10px;}
+  .dd-exercise{margin-bottom:12px;}
+  .dd-exercise-name{font-weight:800; font-size:13px; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;}
+  .dd-set-line{font-family:var(--mono); font-size:13px; color:var(--text); opacity:0.9; padding:2px 0;}
+  .dd-close{width:100%; margin-top:6px;}
+
+  /* History */
+  .history-item{background:var(--panel); border:1px solid var(--line); border-radius:12px; margin-bottom:10px; overflow:hidden;}
+  .history-head{padding:12px 14px; display:flex; justify-content:space-between; align-items:center; cursor:pointer;}
+  .history-date{font-weight:700; font-size:14px;}
+  .history-meta{color:var(--muted); font-size:12px; margin-top:2px;}
+  .history-chevron{color:var(--muted); font-size:12px;}
+  .history-body{display:none; padding:0 14px 14px; border-top:1px solid var(--line);}
+  .history-body.open{display:block;}
+  .hist-exercise{margin-top:10px;}
+  .hist-exercise-name{font-weight:800; font-size:13px; text-transform:uppercase; letter-spacing:0.5px; color:var(--accent); margin-bottom:4px;}
+  .hist-set-line{font-family:var(--mono); font-size:13px; color:var(--text); opacity:0.9; padding:2px 0;}
+  .hist-actions{margin-top:12px; display:flex; justify-content:flex-end;}
+  .sync-tag{
+    font-size:10px; letter-spacing:1px; text-transform:uppercase; padding:2px 6px; border-radius:5px;
+    margin-left:6px; background:var(--panel-2); color:var(--muted); font-weight:700;
+  }
+  .sync-tag.synced{color:#5fd88f;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Gym<span class="dot">•</span>Log</h1>
+  <button class="gear-btn" id="settingsToggle" aria-label="Settings">⚙</button>
+</header>
+
+<div class="settings-panel" id="settingsPanel">
+  <div id="signedOutBlock">
+    <label>Google Client ID</label>
+    <input type="text" id="clientIdInput" placeholder="xxxxxxxxxx.apps.googleusercontent.com" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <div class="settings-row">
+      <button class="btn-primary" id="clientIdSave">Save Client ID</button>
+    </div>
+    <div class="settings-hint">One-time setup: create a free OAuth Client ID in Google Cloud Console and paste it here. See README.md for the exact steps. This is not a secret and is safe to store on this device.</div>
+    <div class="settings-row">
+      <button class="btn-primary" id="signInBtn" disabled>Sign in with Google</button>
+    </div>
+  </div>
+
+  <div id="signedInBlock" style="display:none;">
+    <div class="account-row">
+      <img class="account-avatar" id="accountAvatar" alt="">
+      <div class="account-info">
+        <div class="account-email" id="accountEmail"></div>
+        <div class="account-sub">Signed in</div>
+      </div>
+      <button class="btn-ghost" id="signOutBtn">Sign out</button>
+    </div>
+    <a class="sheet-link" id="sheetLink" href="#" target="_blank" rel="noopener">Open Google Sheet ↗</a>
+    <hr class="settings-divider">
+    <label>Weight unit</label>
+    <div class="unit-toggle">
+      <button id="unitKgBtn">KG</button>
+      <button id="unitLbBtn">LB</button>
+    </div>
+    <div class="settings-row">
+      <button class="btn-ghost" id="sheetSyncNow">Sync Now</button>
+    </div>
+  </div>
+
+  <div class="sync-status" id="syncStatus"><span class="sync-badge" id="syncBadge"></span><span id="syncStatusText">Not configured</span></div>
+</div>
+
+<div class="timer-block">
+  <div class="timer-label">Session Time</div>
+  <div class="timer-display" id="timerDisplay">00:00:00</div>
+  <div class="timer-controls">
+    <button id="timerToggleBtn" class="btn-primary">Start</button>
+    <button id="timerResetBtn" class="btn-ghost">Reset</button>
+  </div>
+</div>
+
+<section>
+  <div class="section-title">Today's Workout</div>
+  <div id="exerciseList"></div>
+  <button class="add-exercise-btn" id="addExerciseBtn">+ Add Exercise</button>
+  <button class="save-workout-btn btn-stop" id="saveWorkoutBtn">Save Workout</button>
+</section>
+
+<section>
+  <div class="section-title">Calendar</div>
+  <div class="calendar-card">
+    <div class="cal-nav">
+      <button class="cal-nav-btn" id="calPrev">‹</button>
+      <div class="cal-month-label" id="calMonthLabel"></div>
+      <button class="cal-nav-btn" id="calNext">›</button>
+    </div>
+    <div class="cal-grid" id="calGrid"></div>
+    <div class="cal-legend">
+      <span><span class="legend-dot"></span> Workout day</span>
+      <span><span class="legend-dot rest"></span> Rest day</span>
+    </div>
+    <div class="day-detail" id="dayDetail">
+      <div class="day-detail-title" id="dayDetailTitle"></div>
+      <div id="dayDetailBody"></div>
+      <button class="btn-ghost dd-close" id="dayDetailClose">Close</button>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="section-title">History</div>
+  <div id="historyList"></div>
+  <div class="empty-note" id="historyEmptyNote" style="display:none;">No saved workouts yet.</div>
+</section>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="app.js"></script>
+</body>
+</html>
