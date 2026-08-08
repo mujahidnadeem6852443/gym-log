@@ -371,14 +371,13 @@ saveWorkoutBtn.addEventListener('click', () => {
 
   cleanExercises.forEach(ex => rememberExercise(ex.name, ex.muscle));
 
-  commitToTodayEntry(cleanExercises, currentElapsed());
+  // Exercises only — the stopwatch is fully independent now (see Save Time)
+  // and must never be read or reset from here.
+  commitToTodayEntry(cleanExercises, 0);
 
   current = { exercises: [] };
   saveCurrent();
   renderExercises();
-
-  timer = { running:false, elapsedMs:0, startedAt:null };
-  saveTimer(); renderTimer();
 
   renderHistory();
   renderCalendar();
