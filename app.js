@@ -6,12 +6,14 @@ const K_CLIENT_ID = 'gymlog_client_id';
 const K_WEIGHT_UNIT = 'gymlog_weight_unit';
 const K_LAST_EMAIL = 'gymlog_last_email';
 const K_PENDING_DELETES = 'gymlog_pending_deletes';
+const K_TEMPLATES = 'gymlog_templates';
 function sheetIdKey(email){ return 'gymlog_sheet_id_' + email; }
 
 // ---------- State ----------
 let current = loadCurrent();
 let history = loadHistory();
 let timer = loadTimer();
+let templates = loadTemplates();
 
 function loadCurrent(){ try{ const r=localStorage.getItem(K_CURRENT); if(r) return JSON.parse(r); }catch(e){} return { exercises: [] }; }
 function saveCurrent(){ localStorage.setItem(K_CURRENT, JSON.stringify(current)); }
@@ -21,6 +23,8 @@ function loadTimer(){ try{ const r=localStorage.getItem(K_TIMER); if(r) return J
 function saveTimer(){ localStorage.setItem(K_TIMER, JSON.stringify(timer)); }
 function loadPendingDeletes(){ try{ const r=localStorage.getItem(K_PENDING_DELETES); if(r) return JSON.parse(r); }catch(e){} return []; }
 function savePendingDeletes(list){ localStorage.setItem(K_PENDING_DELETES, JSON.stringify(list)); }
+function loadTemplates(){ try{ const r=localStorage.getItem(K_TEMPLATES); if(r) return JSON.parse(r); }catch(e){} return []; }
+function saveTemplates(list){ localStorage.setItem(K_TEMPLATES, JSON.stringify(list)); }
 function uid(){ return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2,10)); }
 function getWeightUnit(){ return localStorage.getItem(K_WEIGHT_UNIT) || 'kg'; }
 
@@ -64,10 +68,91 @@ timerResetBtn.addEventListener('click', () => {
 setInterval(() => { if(timer.running) renderTimer(); }, 1000);
 renderTimer();
 
+// ---------- Exercise library (derived from history, no separate storage) ----------
+// Every exercise name ever logged, deduped case-insensitively (keeping whichever
+// casing was used most recently) and ordered by recency of use. This both
+// powers autocomplete and is the lookup key for "last time" performance.
+function getExerciseSuggestions(){
+  const seen = new Map();
+  history.forEach(entry => {
+    entry.exercises.forEach(ex => {
+      const key = ex.name.trim().toLowerCase();
+      if(!key) return;
+      const existing = seen.get(key);
+      if(!existing || new Date(entry.date) > new Date(existing.lastUsed)){
+        seen.set(key, { name: ex.name.trim(), lastUsed: entry.date });
+      }
+    });
+  });
+  return [...seen.values()].sort((a, b) => new Date(b.lastUsed) - new Date(a.lastUsed)).map(v => v.name);
+}
+
+// history is stored newest-first, so the first exercise-name match found is
+// automatically the most recent occurrence.
+function getLastPerformance(exerciseName){
+  const key = exerciseName.trim().toLowerCase();
+  if(!key) return null;
+  for(const entry of history){
+    const match = entry.exercises.find(ex => ex.name.trim().toLowerCase() === key);
+    if(match) return { date: entry.date, sets: match.sets };
+  }
+  return null;
+}
+
+function formatSetsInline(sets){
+  return sets.map(s => `${s.weight === '' ? '-' : s.weight}×${s.reps === '' ? '-' : s.reps}`).join(', ');
+}
+
+function currentHasContent(){
+  return current.exercises.some(ex => ex.name.trim() !== '' || ex.sets.some(s => s.reps !== '' || s.weight !== ''));
+}
+
+// Wraps a text input with a lightweight, mobile-reliable suggestion dropdown.
+// Uses pointerdown (not click) with preventDefault so tapping a suggestion
+// never fires the input's blur first — datalist's native behavior is too
+// inconsistent on iOS Safari to rely on for this.
+function attachExerciseAutocomplete(input, onSelect){
+  const wrap = document.createElement('div');
+  wrap.className = 'autocomplete-wrap';
+  input.parentNode.insertBefore(wrap, input);
+  wrap.appendChild(input);
+
+  const list = document.createElement('div');
+  list.className = 'autocomplete-list';
+  wrap.appendChild(list);
+
+  function renderSuggestions(){
+    const q = input.value.trim().toLowerCase();
+    const all = getExerciseSuggestions();
+    const matches = (q ? all.filter(n => n.toLowerCase().includes(q) && n.toLowerCase() !== q) : all).slice(0, 6);
+    list.innerHTML = '';
+    if(matches.length === 0){ list.classList.remove('open'); return; }
+    matches.forEach(name => {
+      const item = document.createElement('div');
+      item.className = 'autocomplete-item';
+      item.textContent = name;
+      item.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        input.value = name;
+        onSelect(name);
+        list.classList.remove('open');
+      });
+      list.appendChild(item);
+    });
+    list.classList.add('open');
+  }
+
+  input.addEventListener('focus', renderSuggestions);
+  input.addEventListener('input', renderSuggestions);
+  input.addEventListener('blur', () => list.classList.remove('open'));
+}
+
 // ---------- Workout logging ----------
 const exerciseList = document.getElementById('exerciseList');
 const addExerciseBtn = document.getElementById('addExerciseBtn');
 const saveWorkoutBtn = document.getElementById('saveWorkoutBtn');
+const copyLastWorkoutBtn = document.getElementById('copyLastWorkoutBtn');
+const templateRow = document.getElementById('templateRow');
 
 function addExercise(focus){
   const ex = { id: uid(), name:'', sets:[{reps:'', weight:''}] };
@@ -105,7 +190,6 @@ function renderExercises(focusId){
     nameInput.className = 'exercise-name';
     nameInput.placeholder = 'Exercise name';
     nameInput.value = ex.name;
-    nameInput.addEventListener('input', e => { ex.name = e.target.value; saveCurrent(); });
     const removeBtn = document.createElement('button');
     removeBtn.className = 'remove-exercise';
     removeBtn.textContent = '✕';
@@ -113,6 +197,23 @@ function renderExercises(focusId){
     removeBtn.addEventListener('click', () => removeExercise(ex.id));
     head.appendChild(nameInput); head.appendChild(removeBtn);
     card.appendChild(head);
+
+    const lastPerfEl = document.createElement('div');
+    lastPerfEl.className = 'last-performance';
+    function updateLastPerf(){
+      const perf = getLastPerformance(ex.name);
+      if(perf){
+        lastPerfEl.innerHTML = '<b>Last:</b> ' + formatSetsInline(perf.sets);
+        lastPerfEl.style.display = 'block';
+      } else {
+        lastPerfEl.style.display = 'none';
+      }
+    }
+    updateLastPerf();
+    card.appendChild(lastPerfEl);
+
+    nameInput.addEventListener('input', e => { ex.name = e.target.value; saveCurrent(); updateLastPerf(); });
+    attachExerciseAutocomplete(nameInput, (name) => { ex.name = name; saveCurrent(); updateLastPerf(); });
 
     ex.sets.forEach((set, idx) => {
       const row = document.createElement('div');
@@ -154,6 +255,93 @@ function renderExercises(focusId){
 }
 
 addExerciseBtn.addEventListener('click', () => addExercise(true));
+
+// ---------- Copy Last Workout ----------
+// Carries over exercise names AND the actual reps/weight from your most
+// recent saved session, so you're adjusting numbers rather than retyping
+// everything from scratch.
+function copyLastWorkout(){
+  if(history.length === 0){ alert('No previous workouts to copy yet.'); return; }
+  if(currentHasContent() && !confirm('Replace what you\'ve entered so far with your last workout?')) return;
+
+  const last = history[0];
+  current = {
+    exercises: last.exercises.map(ex => ({
+      id: uid(),
+      name: ex.name,
+      sets: ex.sets.map(s => ({ reps: s.reps, weight: s.weight }))
+    }))
+  };
+  saveCurrent();
+  renderExercises();
+}
+copyLastWorkoutBtn.addEventListener('click', copyLastWorkout);
+
+// ---------- Workout templates ----------
+// A template captures exercise names + how many sets each has — deliberately
+// no reps/weight, since those change session to session (that's what Copy
+// Last Workout is for). Starting from a template gives you blank sets ready
+// to fill in, with "Last:" performance still showing per exercise.
+function renderTemplates(){
+  templateRow.innerHTML = '';
+  templates.forEach(tpl => {
+    const chip = document.createElement('div');
+    chip.className = 'template-chip';
+
+    const label = document.createElement('span');
+    label.className = 'template-chip-label';
+    label.textContent = tpl.name;
+    label.addEventListener('click', () => useTemplate(tpl));
+
+    const del = document.createElement('button');
+    del.className = 'tpl-del';
+    del.textContent = '✕';
+    del.setAttribute('aria-label', 'Delete template ' + tpl.name);
+    del.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if(!confirm(`Delete the "${tpl.name}" template?`)) return;
+      templates = templates.filter(t => t.id !== tpl.id);
+      saveTemplates(templates);
+      renderTemplates();
+    });
+
+    chip.appendChild(label); chip.appendChild(del);
+    templateRow.appendChild(chip);
+  });
+
+  const addChip = document.createElement('button');
+  addChip.className = 'template-chip-add';
+  addChip.textContent = '+ Save as Template';
+  addChip.addEventListener('click', saveCurrentAsTemplate);
+  templateRow.appendChild(addChip);
+}
+
+function saveCurrentAsTemplate(){
+  const real = current.exercises.filter(ex => ex.name.trim() !== '');
+  if(real.length === 0){ alert('Add at least one named exercise before saving a template.'); return; }
+  const name = prompt('Name this template (e.g. "Push Day"):');
+  if(!name || !name.trim()) return;
+  templates.push({
+    id: uid(),
+    name: sanitizeText(name).trim(),
+    exercises: real.map(ex => ({ name: ex.name.trim(), setCount: Math.max(1, ex.sets.length) }))
+  });
+  saveTemplates(templates);
+  renderTemplates();
+}
+
+function useTemplate(tpl){
+  if(currentHasContent() && !confirm(`Start "${tpl.name}"? This replaces what you've entered so far.`)) return;
+  current = {
+    exercises: tpl.exercises.map(ex => ({
+      id: uid(),
+      name: ex.name,
+      sets: Array.from({ length: ex.setCount }, () => ({ reps:'', weight:'' }))
+    }))
+  };
+  saveCurrent();
+  renderExercises();
+}
 
 saveWorkoutBtn.addEventListener('click', () => {
   const cleanExercises = current.exercises
@@ -318,6 +506,7 @@ function renderEditForm(container, entry){
       const nameInput = document.createElement('input');
       nameInput.className = 'exercise-name'; nameInput.placeholder = 'Exercise name'; nameInput.value = ex.name;
       nameInput.addEventListener('input', e => { ex.name = e.target.value; });
+      attachExerciseAutocomplete(nameInput, (name) => { ex.name = name; });
       const rmEx = document.createElement('button');
       rmEx.className = 'remove-exercise'; rmEx.textContent = '✕'; rmEx.setAttribute('aria-label', 'Remove exercise');
       rmEx.addEventListener('click', () => { draft.splice(exIdx, 1); renderDraftExercises(); });
@@ -1217,5 +1406,6 @@ if('serviceWorker' in navigator){
 if(current.exercises.length === 0){ addExercise(false); } else { renderExercises(); }
 renderHistory();
 renderCalendar();
+renderTemplates();
 updateAuthUI();
 flushStalePendingDeletes(); // clean up anything left over from a session that closed early
