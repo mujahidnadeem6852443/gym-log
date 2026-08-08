@@ -694,3 +694,11 @@ Keep your data.
 ```
 
 Use it locally with no account, or connect Google and keep a private backup in your own Drive.
+
+
+## 📄 License
+
+This project is licensed under the MIT License.
+
+You are free to use, modify, and distribute Gym Log in accordance with the
+terms of the license.
