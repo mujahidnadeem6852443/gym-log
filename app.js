@@ -429,6 +429,11 @@ function renderHistory(){
         block.className = 'hist-exercise';
         const title = document.createElement('div');
         title.className = 'hist-exercise-name'; title.textContent = ex.name;
+        if(ex.muscle){
+          const tag = document.createElement('span');
+          tag.className = 'muscle-tag'; tag.textContent = ex.muscle;
+          title.appendChild(tag);
+        }
         block.appendChild(title);
         ex.sets.forEach((s,i) => {
           const line = document.createElement('div');
@@ -788,6 +793,11 @@ function showDayDetail(key){
         block.className = 'dd-exercise';
         const title = document.createElement('div');
         title.className = 'dd-exercise-name'; title.textContent = ex.name;
+        if(ex.muscle){
+          const tag = document.createElement('span');
+          tag.className = 'muscle-tag'; tag.textContent = ex.muscle;
+          title.appendChild(tag);
+        }
         block.appendChild(title);
         ex.sets.forEach((s,i) => {
           const line = document.createElement('div');
@@ -1103,12 +1113,25 @@ function exerciseRowsForEntry(entry){
   return entry.exercises.map(ex => {
     const reps = ex.sets.map(s => s.reps === '' ? '-' : s.reps).join('+');
     const weight = ex.sets.map(s => s.weight === '' ? '-' : s.weight).join('+');
-    return [ex.name, ex.sets.length, reps, weight];
+    return [ex.name, ex.sets.length, reps, weight, ex.muscle || ''];
   });
 }
 
+// Writes "Muscle" into E1 unconditionally — cheap, idempotent, and it's how
+// tabs created before this column existed get migrated the next time
+// they're synced to, without needing to track which tabs still need it.
+async function ensureMuscleHeader(token, title){
+  await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`'${title}'!E1`)}?valueInputOption=USER_ENTERED`,
+    { method:'PUT', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values:[['Muscle']] }) }
+  );
+}
+
 async function ensureDateSheet(token, title){
-  if(sheetMetaCache && sheetMetaCache[title] != null) return sheetMetaCache[title];
+  if(sheetMetaCache && sheetMetaCache[title] != null){
+    await ensureMuscleHeader(token, title);
+    return sheetMetaCache[title];
+  }
 
   const addRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
     method:'POST',
@@ -1120,10 +1143,10 @@ async function ensureDateSheet(token, title){
   const sheetId = added.replies[0].addSheet.properties.sheetId;
 
   const unit = getWeightUnit().toUpperCase();
-  const headerRange = `'${title}'!A1:D1`;
+  const headerRange = `'${title}'!A1:E1`;
   const headerRes = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(headerRange)}?valueInputOption=USER_ENTERED`,
-    { method:'PUT', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values:[['Exercise','Sets','Reps',`Weight (${unit})`]] }) }
+    { method:'PUT', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values:[['Exercise','Sets','Reps',`Weight (${unit})`,'Muscle']] }) }
   );
   if(!headerRes.ok) throw new Error('Failed to write header for "' + title + '" (' + headerRes.status + ')');
 
@@ -1148,7 +1171,7 @@ async function ensureDateSheet(token, title){
 // (e.g. "wk:<id>") so we can find and remove exactly those rows later if the
 // workout is deleted — without adding a visible ID column to the table.
 async function tagRowsWithWorkoutId(token, sheetId, updatedRange, workoutId){
-  const m = /!A(\d+):D(\d+)/.exec(updatedRange || '');
+  const m = /!A(\d+):[A-Za-z]+(\d+)/.exec(updatedRange || '');
   if(!m) return;
   const start = parseInt(m[1], 10);
   const end = parseInt(m[2], 10);
@@ -1182,7 +1205,7 @@ async function syncEntry(token, entry){
   const rows = [];
   if(hasPriorSession){
     const time = new Date(entry.date).toLocaleTimeString(undefined, { hour:'2-digit', minute:'2-digit' });
-    rows.push([`— ${time} —`, '', '', '']);
+    rows.push([`— ${time} —`, '', '', '', '']);
   }
   rows.push(...exerciseRowsForEntry(entry));
 
@@ -1318,7 +1341,7 @@ async function restoreFromSheet(){
           reps: (rp === '-' || rp === '') ? '' : Number(rp),
           weight: (weightParts[i] === '-' || weightParts[i] == null || weightParts[i] === '') ? '' : Number(weightParts[i])
         }));
-        return { name: r[0], sets };
+        return { name: r[0], muscle: r[4] || '', sets };
       });
       if(exercises.length === 0) return;
 
@@ -1331,7 +1354,7 @@ async function restoreFromSheet(){
   if(restored.length){
     history = history.concat(restored).sort((a, b) => new Date(b.date) - new Date(a.date));
     saveHistory();
-    restored.forEach(entry => entry.exercises.forEach(ex => rememberExercise(ex.name)));
+    restored.forEach(entry => entry.exercises.forEach(ex => rememberExercise(ex.name, ex.muscle)));
     renderHistory();
     renderCalendar();
   }

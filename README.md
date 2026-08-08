@@ -30,14 +30,18 @@ with one **Overview** tab. From then on, every day you log a workout gets its
 own tab, named by date — e.g. **"8 Aug 2026"**. Open that tab and you'll see
 a plain table, one row per exercise:
 
-| Exercise    | Sets | Reps     | Weight (KG) |
-|-------------|------|----------|-------------|
-| Cable Rows  | 3    | 12+12+10 | 60+55+55    |
+| Exercise    | Sets | Reps     | Weight (KG) | Muscle |
+|-------------|------|----------|-------------|--------|
+| Cable Rows  | 3    | 12+12+10 | 60+55+55    | Back   |
 
 - **Sets** is how many sets you did for that exercise.
 - **Reps** and **Weight** list every set's value, in order, joined with `+` —
   so `12+12+10` means set 1 was 12 reps, set 2 was 12, set 3 was 10, and the
   weight column lines up the same way set-for-set.
+- **Muscle** is whichever of Chest / Back / Biceps / Triceps / Shoulders /
+  Legs / Abs you picked for that exercise in the app (blank if you didn't
+  set one). Tabs created before this existed get the column added
+  automatically the next time you sync a workout into them.
 
 No duration, no volume, no workout IDs — just the plain log. (The app still
 shows your session timer locally in the History list on your phone; it's
