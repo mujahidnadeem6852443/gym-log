@@ -1607,3 +1607,9 @@ renderHistory();
 renderCalendar();
 updateAuthUI();
 flushStalePendingDeletes(); // clean up anything left over from a session that closed early
+
+// Splash screen: shown for ~2s on every open, then fades out.
+setTimeout(() => {
+  const splash = document.getElementById('splashScreen');
+  if(splash) splash.classList.add('hide');
+}, 2000);

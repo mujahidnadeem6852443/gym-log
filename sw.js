@@ -1,4 +1,4 @@
-const CACHE = 'gymlog-shell-v2';
+const CACHE = 'gymlog-shell-v3';
 const SHELL = [
   './',
   './index.html',
