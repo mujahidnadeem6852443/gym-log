@@ -43,13 +43,19 @@ a plain table, one row per exercise:
   set one). Tabs created before this existed get the column added
   automatically the next time you sync a workout into them.
 
-No duration, no volume, no workout IDs — just the plain log. (The app still
-shows your session timer locally in the History list on your phone; it's
-just not written to the Sheet.)
+No volume, no workout IDs — just the plain log. Off to the side, columns
+**F1/F2** hold the day's total workout duration (e.g. `Duration` / `00:35:12`)
+— separate from the exercise table so it never collides with it. This is the
+one thing besides exercises that does get written to the Sheet: it's how the
+"time to complete the workout" figure survives a Restore on a new device.
 
-If you log a second workout on the same date, its rows are appended below
-the first, separated by a small `— 7:32 PM —` marker row so the two sessions
-stay visually distinct.
+The app keeps **one history record per calendar day**. If you save a workout,
+then later save more exercises the same day (or tap "Save Time" on the
+stopwatch independently of saving any exercises), they all fold into that
+same day's single record rather than piling up as separate entries — both on
+your phone and, the next time it syncs, in the Sheet too. If two different
+devices happen to sync the same day separately, the Sheet keeps both blocks
+apart with a small `— 7:32 PM —` marker row so nothing blends together.
 
 Because each day is its own tab, you can jump straight to any date from the
 tab bar at the bottom of Google Sheets, or use **Data > Create a filter** /

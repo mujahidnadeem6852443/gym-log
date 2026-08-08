@@ -138,8 +138,8 @@
     transition:color .2s;
   }
   .timer-display.running{color:var(--blue); text-shadow:0 0 18px rgba(77,168,255,.35);}
-  .timer-controls{display:flex; gap:10px; justify-content:center; margin-top:16px;}
-  .timer-controls button{flex:1; max-width:140px;}
+  .timer-controls{display:flex; gap:8px; justify-content:center; margin-top:16px;}
+  .timer-controls button{flex:1; max-width:130px; padding:13px 8px; font-size:13px;}
 
   button{
     font-family:var(--sans); font-weight:700; font-size:14px;
@@ -249,6 +249,11 @@
   .cal-day:not(.empty){cursor:pointer;}
   .cal-day.has-workout{border-color:var(--green-dim);}
   .cal-day.has-workout .cal-dot{width:5px; height:5px; border-radius:50%; background:var(--green); margin-top:2px;}
+  .cal-day.has-workout .cal-muscle{
+    font-family:var(--mono); font-size:8px; font-weight:800; letter-spacing:0.2px;
+    color:var(--green); margin-top:1px; line-height:1; max-width:100%;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
   .cal-day.rest-day{border-color:var(--accent-dim);}
   .cal-day.rest-day .cal-dot-rest{width:5px; height:5px; border-radius:50%; background:var(--accent); margin-top:2px;}
   .cal-day.today{outline:1px solid var(--blue);}
@@ -271,6 +276,7 @@
   .dd-day-nav{display:flex; gap:6px; flex-shrink:0;}
   .dd-day-nav button{padding:6px 10px; font-size:14px;}
   .dd-rest-note{color:var(--muted); font-size:13px; padding:10px 0;}
+  .dd-duration{font-family:var(--mono); font-size:12px; color:var(--blue); margin-bottom:10px;}
   .dd-exercise{margin-bottom:12px;}
   .dd-exercise-name{font-weight:800; font-size:13px; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;}
   .dd-set-line{font-family:var(--mono); font-size:13px; color:var(--text); opacity:0.9; padding:2px 0;}
@@ -391,6 +397,7 @@
   <div class="timer-display" id="timerDisplay">00:00:00</div>
   <div class="timer-controls">
     <button id="timerToggleBtn" class="btn-primary">Start</button>
+    <button id="timerSaveBtn" class="btn-stop">Save Time</button>
     <button id="timerResetBtn" class="btn-ghost">Reset</button>
   </div>
 </div>

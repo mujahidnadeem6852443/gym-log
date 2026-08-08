@@ -44,6 +44,7 @@ function sanitizeText(str){ return String(str == null ? '' : str).replace(/[<>]/
 // ---------- Timer ----------
 const timerDisplay = document.getElementById('timerDisplay');
 const timerToggleBtn = document.getElementById('timerToggleBtn');
+const timerSaveBtn = document.getElementById('timerSaveBtn');
 const timerResetBtn = document.getElementById('timerResetBtn');
 
 function fmt(ms){
@@ -52,6 +53,11 @@ function fmt(ms){
   const m = String(Math.floor((total%3600)/60)).padStart(2,'0');
   const s = String(total%60).padStart(2,'0');
   return h+':'+m+':'+s;
+}
+function parseDurationToMs(str){
+  const m = /^(\d+):(\d{2}):(\d{2})$/.exec((str || '').trim());
+  if(!m) return 0;
+  return ((parseInt(m[1],10)*3600) + (parseInt(m[2],10)*60) + parseInt(m[3],10)) * 1000;
 }
 function currentElapsed(){
   if(timer.running && timer.startedAt) return timer.elapsedMs + (Date.now() - timer.startedAt);
@@ -75,6 +81,25 @@ timerResetBtn.addEventListener('click', () => {
   timer = { running:false, elapsedMs:0, startedAt:null };
   saveTimer(); renderTimer();
 });
+
+// Independent of Save Workout: stops the clock, commits whatever time has
+// accumulated to today's single history record (creating it if this is the
+// first thing saved today), and resets to 00:00:00 — entirely separate from
+// whether any exercises have been logged yet.
+timerSaveBtn.addEventListener('click', () => {
+  const elapsed = currentElapsed();
+  if(elapsed <= 0){ alert('Start the timer before saving time.'); return; }
+
+  timer = { running:false, elapsedMs:0, startedAt:null };
+  saveTimer(); renderTimer();
+
+  commitToTodayEntry([], elapsed);
+
+  renderHistory();
+  renderCalendar();
+  refreshSyncBadge();
+});
+
 setInterval(() => { if(timer.running) renderTimer(); }, 1000);
 renderTimer();
 
@@ -86,6 +111,7 @@ renderTimer();
 // "bench press" collapse into one remembered entry (keeping whichever
 // casing you used last).
 const MUSCLE_GROUPS = ['Chest', 'Back', 'Biceps', 'Triceps', 'Shoulders', 'Legs', 'Abs'];
+const MUSCLE_ABBR = { Chest:'C', Back:'B', Biceps:'Bi', Triceps:'Tri', Shoulders:'S', Legs:'L', Abs:'A' };
 
 // rememberExercise(name, muscle) — muscle is optional; when omitted, any
 // muscle group already remembered for this name is kept as-is rather than
@@ -345,15 +371,7 @@ saveWorkoutBtn.addEventListener('click', () => {
 
   cleanExercises.forEach(ex => rememberExercise(ex.name, ex.muscle));
 
-  const entry = {
-    id: uid(),
-    date: new Date().toISOString(),
-    durationMs: currentElapsed(),
-    exercises: cleanExercises,
-    synced: false
-  };
-  history.unshift(entry);
-  saveHistory();
+  commitToTodayEntry(cleanExercises, currentElapsed());
 
   current = { exercises: [] };
   saveCurrent();
@@ -365,8 +383,35 @@ saveWorkoutBtn.addEventListener('click', () => {
   renderHistory();
   renderCalendar();
   refreshSyncBadge();
-  syncAll(false);
 });
+
+// Every save (exercises and/or time) lands in a single history record per
+// calendar day. If today already has one, the new exercises are appended
+// to it and the elapsed time is added to its running total, then the whole
+// thing is re-synced (delete-old-rows + re-append) so the Sheet ends up
+// with exactly one consistent block for the day rather than duplicates.
+// If today has no entry yet, a fresh one is created and queued normally.
+function commitToTodayEntry(newExercises, elapsedMs){
+  const todayKey = dateKey(new Date());
+  const existing = history.find(h => dateKey(new Date(h.date)) === todayKey);
+
+  if(existing){
+    const mergedExercises = existing.exercises.concat(newExercises);
+    existing.durationMs = (existing.durationMs || 0) + (elapsedMs || 0);
+    saveEditedEntry(existing, mergedExercises); // exercises assign synchronously; Sheet sync runs in background
+  } else {
+    const entry = {
+      id: uid(),
+      date: new Date().toISOString(),
+      durationMs: elapsedMs || 0,
+      exercises: newExercises,
+      synced: false
+    };
+    history.unshift(entry);
+    saveHistory();
+    syncAll(false);
+  }
+}
 
 // ---------- History ----------
 const historyList = document.getElementById('historyList');
@@ -719,6 +764,32 @@ function dateKey(d){
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
 }
 
+// Collapses any history entries sharing a calendar day into one, keeping the
+// first entry's id (and so its Sheet rows) as the survivor and appending the
+// rest's exercises/duration into it. Used as a one-time cleanup for data
+// saved before "one entry per day" existed, and after restoring from the
+// Sheet in case multiple devices synced the same day separately. Rows
+// already in the Sheet for the entries that get merged away are left alone
+// — merging is local-only; the next time that day is saved or edited, the
+// re-sync naturally consolidates the Sheet side onto the surviving id too.
+function mergeHistoryByDay(entries){
+  const byDay = new Map();
+  const order = [];
+  entries.forEach(entry => {
+    const key = dateKey(new Date(entry.date));
+    if(byDay.has(key)){
+      const base = byDay.get(key);
+      base.exercises = base.exercises.concat(entry.exercises);
+      base.durationMs = (base.durationMs || 0) + (entry.durationMs || 0);
+      base.synced = false;
+    } else {
+      byDay.set(key, entry);
+      order.push(key);
+    }
+  });
+  return order.map(k => byDay.get(k)).sort((a, b) => new Date(b.date) - new Date(a.date));
+}
+
 function entriesByDay(){
   const map = {};
   history.forEach(entry => {
@@ -727,6 +798,18 @@ function entriesByDay(){
     map[key].push(entry);
   });
   return map;
+}
+
+// Distinct muscle groups trained across all entries logged that day, in the
+// order first encountered, abbreviated (Chest→C, Triceps→Tri, etc.) and
+// joined with "/" — e.g. two entries covering Chest and Triceps show "C/Tri".
+function muscleAbbrForDay(entries){
+  const seen = [];
+  entries.forEach(entry => entry.exercises.forEach(ex => {
+    if(ex.muscle && !seen.includes(ex.muscle)) seen.push(ex.muscle);
+  }));
+  if(seen.length === 0) return null;
+  return seen.map(m => MUSCLE_ABBR[m] || m.slice(0, 1)).join('/');
 }
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -765,7 +848,14 @@ function renderCalendar(){
       + (entries ? ' has-workout' : '')
       + (!entries && isPastOrToday ? ' rest-day' : '')
       + (key === todayKey ? ' today' : '');
-    el.innerHTML = `<span>${day}</span>` + (entries ? '<span class="cal-dot"></span>' : (isPastOrToday ? '<span class="cal-dot-rest"></span>' : ''));
+    let marker = '';
+    if(entries){
+      const abbr = muscleAbbrForDay(entries);
+      marker = abbr ? `<span class="cal-muscle">${abbr}</span>` : '<span class="cal-dot"></span>';
+    } else if(isPastOrToday){
+      marker = '<span class="cal-dot-rest"></span>';
+    }
+    el.innerHTML = `<span>${day}</span>` + marker;
     el.addEventListener('click', () => showDayDetail(key));
     calGrid.appendChild(el);
   }
@@ -787,6 +877,13 @@ function showDayDetail(key){
     note.textContent = 'Rest day — no workout logged.';
     dayDetailBody.appendChild(note);
   } else {
+    const totalDuration = entries.reduce((sum, e) => sum + (e.durationMs || 0), 0);
+    if(totalDuration > 0){
+      const durationLine = document.createElement('div');
+      durationLine.className = 'dd-duration';
+      durationLine.textContent = 'Time: ' + fmt(totalDuration);
+      dayDetailBody.appendChild(durationLine);
+    }
     entries.forEach(entry => {
       entry.exercises.forEach(ex => {
         const block = document.createElement('div');
@@ -1189,9 +1286,33 @@ async function tagRowsWithWorkoutId(token, sheetId, updatedRange, workoutId){
   });
 }
 
+// F1/F2 hold the day's total workout duration — separate from the A:E
+// exercise table so it never collides with existing rows/columns there.
+// Written unconditionally (even to "00:00:00") every sync so it always
+// reflects entry.durationMs, including for a duration-only save with no
+// exercises yet.
+async function writeDurationCell(token, title, durationMs){
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`, {
+    method:'POST',
+    headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
+    body: JSON.stringify({
+      valueInputOption:'USER_ENTERED',
+      data:[
+        { range:`'${title}'!F1`, values:[['Duration']] },
+        { range:`'${title}'!F2`, values:[[fmt(durationMs || 0)]] }
+      ]
+    })
+  });
+}
+
 async function syncEntry(token, entry){
   const title = sheetTitleForDate(entry.date);
   const sheetId = await ensureDateSheet(token, title);
+
+  await writeDurationCell(token, title, entry.durationMs);
+
+  const exerciseRows = exerciseRowsForEntry(entry);
+  if(exerciseRows.length === 0) return; // duration-only save, nothing else to write
 
   // If this tab already has rows from an earlier workout logged the same day,
   // add a small time-stamped separator so the two sessions don't blend together.
@@ -1207,7 +1328,7 @@ async function syncEntry(token, entry){
     const time = new Date(entry.date).toLocaleTimeString(undefined, { hour:'2-digit', minute:'2-digit' });
     rows.push([`— ${time} —`, '', '', '', '']);
   }
-  rows.push(...exerciseRowsForEntry(entry));
+  rows.push(...exerciseRows);
 
   const appendRange = `'${title}'!A1`;
   const appendRes = await fetch(
@@ -1312,6 +1433,13 @@ async function restoreFromSheet(){
     if(!dateParts) return;
 
     const rowData = (sheet.data && sheet.data[0] && sheet.data[0].rowData) || [];
+    // Duration lives in F2 (row index 1), independent of the exercise rows —
+    // only the first reconstructed group for this tab gets it, so merging
+    // same-day groups afterward doesn't double-count it.
+    const durationCell = rowData[1] && rowData[1].values && rowData[1].values[5];
+    const tabDurationMs = parseDurationToMs(durationCell && durationCell.formattedValue);
+    let durationAssigned = false;
+
     const groups = [];
     let current = null;
     for(let i = 1; i < rowData.length; i++){ // row 0 is the header
@@ -1346,13 +1474,15 @@ async function restoreFromSheet(){
       if(exercises.length === 0) return;
 
       const entryDate = new Date(dateParts.year, dateParts.month, dateParts.day, hh, mm);
-      restored.push({ id: g.workoutId, date: entryDate.toISOString(), durationMs: 0, exercises, synced: true });
+      const durationMs = durationAssigned ? 0 : tabDurationMs;
+      durationAssigned = true;
+      restored.push({ id: g.workoutId, date: entryDate.toISOString(), durationMs, exercises, synced: true });
       existingIds.add(g.workoutId);
     });
   });
 
   if(restored.length){
-    history = history.concat(restored).sort((a, b) => new Date(b.date) - new Date(a.date));
+    history = mergeHistoryByDay(history.concat(restored));
     saveHistory();
     restored.forEach(entry => entry.exercises.forEach(ex => rememberExercise(ex.name, ex.muscle)));
     renderHistory();
@@ -1435,6 +1565,8 @@ if('serviceWorker' in navigator){
 }
 
 // ---------- Init ----------
+history = mergeHistoryByDay(history); // one-time cleanup for any pre-existing same-day duplicates
+saveHistory();
 if(current.exercises.length === 0){ addExercise(false); } else { renderExercises(); }
 renderHistory();
 renderCalendar();
