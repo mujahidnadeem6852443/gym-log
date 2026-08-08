@@ -1612,4 +1612,4 @@ flushStalePendingDeletes(); // clean up anything left over from a session that c
 setTimeout(() => {
   const splash = document.getElementById('splashScreen');
   if(splash) splash.classList.add('hide');
-}, 2000);
+}, 1500);
