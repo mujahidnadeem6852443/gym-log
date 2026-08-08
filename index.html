@@ -255,12 +255,37 @@
   .hist-exercise{margin-top:10px;}
   .hist-exercise-name{font-weight:800; font-size:13px; text-transform:uppercase; letter-spacing:0.5px; color:var(--accent); margin-bottom:4px;}
   .hist-set-line{font-family:var(--mono); font-size:13px; color:var(--text); opacity:0.9; padding:2px 0;}
-  .hist-actions{margin-top:12px; display:flex; justify-content:flex-end;}
+  .hist-actions{margin-top:12px; display:flex; justify-content:flex-end; gap:8px;}
   .sync-tag{
     font-size:10px; letter-spacing:1px; text-transform:uppercase; padding:2px 6px; border-radius:5px;
     margin-left:6px; background:var(--panel-2); color:var(--muted); font-weight:700;
   }
   .sync-tag.synced{color:#5fd88f;}
+
+  .history-search{
+    width:100%; background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    color:var(--text); font-size:14px; padding:11px 14px; outline:none; margin-bottom:10px;
+  }
+  .history-search:focus{border-color:var(--blue);}
+  .history-search::placeholder{color:var(--muted);}
+
+  /* In-place workout editor, reuses the exercise/set-row styling */
+  .edit-form{margin-top:10px;}
+  .edit-actions{display:flex; gap:8px; margin-top:12px;}
+  .edit-actions button{flex:1;}
+
+  /* Undo-delete toast */
+  .toast{
+    position:fixed; left:16px; right:16px;
+    bottom:calc(16px + env(safe-area-inset-bottom, 0px));
+    max-width:420px; margin:0 auto;
+    background:var(--panel-2); border:1px solid var(--line); border-radius:12px;
+    padding:14px 16px; display:none; align-items:center; justify-content:space-between; gap:12px;
+    z-index:50; box-shadow:0 8px 24px rgba(0,0,0,0.45);
+  }
+  .toast.show{display:flex;}
+  .toast span{font-size:14px; color:var(--text);}
+  .toast-action{background:none; border:none; color:var(--blue); font-weight:800; font-size:14px; padding:4px 8px; flex-shrink:0;}
 </style>
 </head>
 <body>
@@ -285,6 +310,7 @@
       <div class="settings-hint">Create a free OAuth Client ID in Google Cloud Console and paste it here — see README.md for exact steps. A Client ID is a public app identifier, not a secret or a password, and is safe to store on this device.</div>
     </details>
 
+    <div class="settings-hint" id="reconnectHint" style="display:none;"></div>
     <button class="gsi-btn" id="signInBtn" disabled>
       <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
         <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z"/>
@@ -292,7 +318,7 @@
         <path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/>
         <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/>
       </svg>
-      Sign in with Google
+      <span id="signInBtnLabel">Sign in with Google</span>
     </button>
     <div class="security-note">This button only opens Google's own accounts.google.com sign-in page in a Google-controlled popup. This app never sees, asks for, or stores your Google password.</div>
   </div>
@@ -368,9 +394,12 @@
 
 <section>
   <div class="section-title">History</div>
+  <input type="search" class="history-search" id="historySearch" placeholder="Search exercises or dates…" autocomplete="off">
   <div id="historyList"></div>
   <div class="empty-note" id="historyEmptyNote" style="display:none;">No saved workouts yet.</div>
 </section>
+
+<div class="toast" id="toast"></div>
 
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="app.js"></script>

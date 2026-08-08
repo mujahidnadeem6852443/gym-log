@@ -5,6 +5,7 @@ const K_TIMER = 'gymlog_timer';
 const K_CLIENT_ID = 'gymlog_client_id';
 const K_WEIGHT_UNIT = 'gymlog_weight_unit';
 const K_LAST_EMAIL = 'gymlog_last_email';
+const K_PENDING_DELETES = 'gymlog_pending_deletes';
 function sheetIdKey(email){ return 'gymlog_sheet_id_' + email; }
 
 // ---------- State ----------
@@ -18,6 +19,8 @@ function loadHistory(){ try{ const r=localStorage.getItem(K_HISTORY); if(r) retu
 function saveHistory(){ localStorage.setItem(K_HISTORY, JSON.stringify(history)); }
 function loadTimer(){ try{ const r=localStorage.getItem(K_TIMER); if(r) return JSON.parse(r); }catch(e){} return { running:false, elapsedMs:0, startedAt:null }; }
 function saveTimer(){ localStorage.setItem(K_TIMER, JSON.stringify(timer)); }
+function loadPendingDeletes(){ try{ const r=localStorage.getItem(K_PENDING_DELETES); if(r) return JSON.parse(r); }catch(e){} return []; }
+function savePendingDeletes(list){ localStorage.setItem(K_PENDING_DELETES, JSON.stringify(list)); }
 function uid(){ return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2,10)); }
 function getWeightUnit(){ return localStorage.getItem(K_WEIGHT_UNIT) || 'kg'; }
 
@@ -193,6 +196,9 @@ saveWorkoutBtn.addEventListener('click', () => {
 // ---------- History ----------
 const historyList = document.getElementById('historyList');
 const historyEmptyNote = document.getElementById('historyEmptyNote');
+const historySearch = document.getElementById('historySearch');
+
+let editingEntryId = null;
 
 function formatDate(iso){
   const d = new Date(iso);
@@ -200,11 +206,27 @@ function formatDate(iso){
     ' · ' + d.toLocaleTimeString(undefined, {hour:'numeric', minute:'2-digit'});
 }
 
+function matchesHistoryQuery(entry, query){
+  if(entry.exercises.some(ex => ex.name.toLowerCase().includes(query))) return true;
+  return formatDate(entry.date).toLowerCase().includes(query);
+}
+
 function renderHistory(){
   historyList.innerHTML = '';
-  historyEmptyNote.style.display = history.length ? 'none' : 'block';
+  const query = historySearch.value.trim().toLowerCase();
+  const visible = query ? history.filter(h => matchesHistoryQuery(h, query)) : history;
 
-  history.forEach(entry => {
+  if(history.length === 0){
+    historyEmptyNote.style.display = 'block';
+    historyEmptyNote.textContent = 'No saved workouts yet.';
+  } else if(visible.length === 0){
+    historyEmptyNote.style.display = 'block';
+    historyEmptyNote.textContent = `No workouts match "${historySearch.value.trim()}".`;
+  } else {
+    historyEmptyNote.style.display = 'none';
+  }
+
+  visible.forEach(entry => {
     const item = document.createElement('div');
     item.className = 'history-item';
 
@@ -221,53 +243,259 @@ function renderHistory(){
 
     const body = document.createElement('div');
     body.className = 'history-body';
-    entry.exercises.forEach(ex => {
-      const block = document.createElement('div');
-      block.className = 'hist-exercise';
-      const title = document.createElement('div');
-      title.className = 'hist-exercise-name'; title.textContent = ex.name;
-      block.appendChild(title);
-      ex.sets.forEach((s,i) => {
-        const line = document.createElement('div');
-        line.className = 'hist-set-line';
-        line.textContent = `Set ${i+1}:  ${s.reps === '' ? '-' : s.reps} reps  ×  ${s.weight === '' ? '-' : s.weight}`;
-        block.appendChild(line);
+    const isEditing = editingEntryId === entry.id;
+    if(isEditing) body.classList.add('open');
+
+    if(isEditing){
+      renderEditForm(body, entry);
+    } else {
+      entry.exercises.forEach(ex => {
+        const block = document.createElement('div');
+        block.className = 'hist-exercise';
+        const title = document.createElement('div');
+        title.className = 'hist-exercise-name'; title.textContent = ex.name;
+        block.appendChild(title);
+        ex.sets.forEach((s,i) => {
+          const line = document.createElement('div');
+          line.className = 'hist-set-line';
+          line.textContent = `Set ${i+1}:  ${s.reps === '' ? '-' : s.reps} reps  ×  ${s.weight === '' ? '-' : s.weight}`;
+          block.appendChild(line);
+        });
+        body.appendChild(block);
       });
-      body.appendChild(block);
-    });
 
-    const actions = document.createElement('div');
-    actions.className = 'hist-actions';
-    const delBtn = document.createElement('button');
-    delBtn.className = 'btn-danger'; delBtn.textContent = 'Delete';
-    delBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const msg = entry.synced
-        ? 'Delete this workout? It will also be removed from your Google Sheet.'
-        : 'Delete this workout? This cannot be undone.';
-      if(!confirm(msg)) return;
+      const actions = document.createElement('div');
+      actions.className = 'hist-actions';
 
-      if(entry.synced && userEmail){
-        delBtn.disabled = true;
-        delBtn.textContent = 'Deleting…';
-        try{
-          await deleteFromSheet(entry);
-        } catch(err){
-          alert('Deleted from the app, but couldn\'t reach Google Sheets to remove it there too (check your connection). You may need to delete its rows from the "' + sheetTitleForDate(entry.date) + '" tab yourself.');
-        }
-      }
+      const editBtn = document.createElement('button');
+      editBtn.className = 'btn-ghost'; editBtn.textContent = 'Edit';
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        editingEntryId = entry.id;
+        renderHistory();
+      });
 
-      history = history.filter(h => h.id !== entry.id);
-      saveHistory(); renderHistory(); renderCalendar();
-    });
-    actions.appendChild(delBtn);
-    body.appendChild(actions);
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn-danger'; delBtn.textContent = 'Delete';
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteWorkout(entry);
+      });
 
-    head.addEventListener('click', () => body.classList.toggle('open'));
+      actions.appendChild(editBtn);
+      actions.appendChild(delBtn);
+      body.appendChild(actions);
+    }
+
+    head.addEventListener('click', () => { if(!isEditing) body.classList.toggle('open'); });
 
     item.appendChild(head); item.appendChild(body);
     historyList.appendChild(item);
   });
+}
+
+historySearch.addEventListener('input', () => renderHistory());
+
+// In-place workout editor: edits a working copy so Cancel is a no-op, and
+// Save re-syncs by deleting the old tagged rows and re-appending corrected
+// ones (reusing the exact same functions the delete feature already uses).
+function renderEditForm(container, entry){
+  const draft = JSON.parse(JSON.stringify(entry.exercises));
+
+  const wrap = document.createElement('div');
+  wrap.className = 'edit-form';
+  const exList = document.createElement('div');
+  wrap.appendChild(exList);
+
+  function renderDraftExercises(){
+    exList.innerHTML = '';
+    draft.forEach((ex, exIdx) => {
+      const card = document.createElement('div');
+      card.className = 'exercise';
+
+      const head = document.createElement('div');
+      head.className = 'exercise-head';
+      const nameInput = document.createElement('input');
+      nameInput.className = 'exercise-name'; nameInput.placeholder = 'Exercise name'; nameInput.value = ex.name;
+      nameInput.addEventListener('input', e => { ex.name = e.target.value; });
+      const rmEx = document.createElement('button');
+      rmEx.className = 'remove-exercise'; rmEx.textContent = '✕'; rmEx.setAttribute('aria-label', 'Remove exercise');
+      rmEx.addEventListener('click', () => { draft.splice(exIdx, 1); renderDraftExercises(); });
+      head.appendChild(nameInput); head.appendChild(rmEx);
+      card.appendChild(head);
+
+      ex.sets.forEach((set, idx) => {
+        const row = document.createElement('div');
+        row.className = 'set-row';
+        const num = document.createElement('div'); num.className = 'set-num'; num.textContent = idx + 1;
+
+        const repsField = document.createElement('div'); repsField.className = 'set-field';
+        const repsLabel = document.createElement('label'); repsLabel.textContent = 'REPS';
+        const repsInput = document.createElement('input'); repsInput.type = 'number'; inputMode(repsInput);
+        repsInput.value = set.reps;
+        repsInput.addEventListener('input', e => { set.reps = e.target.value; });
+        repsField.appendChild(repsLabel); repsField.appendChild(repsInput);
+
+        const weightField = document.createElement('div'); weightField.className = 'set-field';
+        const weightLabel = document.createElement('label'); weightLabel.textContent = 'WEIGHT (' + getWeightUnit().toUpperCase() + ')';
+        const weightInput = document.createElement('input'); weightInput.type = 'number'; inputMode(weightInput);
+        weightInput.value = set.weight;
+        weightInput.addEventListener('input', e => { set.weight = e.target.value; });
+        weightField.appendChild(weightLabel); weightField.appendChild(weightInput);
+
+        const rmSet = document.createElement('button'); rmSet.className = 'remove-set'; rmSet.textContent = '✕'; rmSet.setAttribute('aria-label', 'Remove set');
+        rmSet.addEventListener('click', () => {
+          ex.sets.splice(idx, 1);
+          if(ex.sets.length === 0) ex.sets.push({ reps:'', weight:'' });
+          renderDraftExercises();
+        });
+
+        row.appendChild(num); row.appendChild(repsField); row.appendChild(weightField); row.appendChild(rmSet);
+        card.appendChild(row);
+      });
+
+      const addSetBtn = document.createElement('button');
+      addSetBtn.className = 'add-set-btn'; addSetBtn.textContent = '+'; addSetBtn.setAttribute('aria-label', 'Add set');
+      addSetBtn.addEventListener('click', () => { ex.sets.push({ reps:'', weight:'' }); renderDraftExercises(); });
+      card.appendChild(addSetBtn);
+
+      exList.appendChild(card);
+    });
+  }
+  renderDraftExercises();
+
+  const addExBtn = document.createElement('button');
+  addExBtn.className = 'add-exercise-btn'; addExBtn.textContent = '+ Add Exercise';
+  addExBtn.addEventListener('click', () => { draft.push({ id: uid(), name:'', sets:[{reps:'', weight:''}] }); renderDraftExercises(); });
+  wrap.appendChild(addExBtn);
+
+  const actionsRow = document.createElement('div');
+  actionsRow.className = 'edit-actions';
+  const saveBtn = document.createElement('button'); saveBtn.className = 'btn-primary'; saveBtn.textContent = 'Save Changes';
+  const cancelBtn = document.createElement('button'); cancelBtn.className = 'btn-ghost'; cancelBtn.textContent = 'Cancel';
+
+  saveBtn.addEventListener('click', async () => {
+    const cleaned = draft
+      .map(ex => ({
+        name: sanitizeText(ex.name || 'Unnamed exercise').trim() || 'Unnamed exercise',
+        sets: ex.sets.filter(s => s.reps !== '' || s.weight !== '').map(s => ({
+          reps: s.reps === '' ? '' : Number(s.reps),
+          weight: s.weight === '' ? '' : Number(s.weight)
+        }))
+      }))
+      .filter(ex => ex.sets.length > 0);
+    if(cleaned.length === 0){ alert('A workout needs at least one set.'); return; }
+
+    saveBtn.disabled = true; cancelBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    await saveEditedEntry(entry, cleaned);
+    editingEntryId = null;
+    renderHistory();
+    renderCalendar();
+  });
+  cancelBtn.addEventListener('click', () => { editingEntryId = null; renderHistory(); });
+
+  actionsRow.appendChild(saveBtn); actionsRow.appendChild(cancelBtn);
+  wrap.appendChild(actionsRow);
+  container.appendChild(wrap);
+}
+
+async function saveEditedEntry(entry, newExercises){
+  entry.exercises = newExercises;
+  if(entry.synced && userEmail){
+    try{
+      const token = await getValidToken();
+      await deleteFromSheet(entry);
+      await syncEntry(token, entry);
+      entry.synced = true;
+    } catch(err){
+      entry.synced = false;
+      alert(isAuthError(err)
+        ? 'Saved locally. Your Google session expired — sign in again in Settings to push this change to your Sheet.'
+        : 'Saved locally, but couldn\'t update Google Sheets (check your connection). It will resync automatically next time.');
+    }
+  }
+  saveHistory();
+}
+
+// ---------- Delete with undo ----------
+// Local removal is immediate; the matching Sheet rows are only actually
+// deleted once the undo window closes, so Undo never needs to talk to
+// Google at all. The pending record is durable (localStorage), so if the
+// app gets closed before the window closes, it's finalized on next launch
+// instead of silently leaving orphan rows in the Sheet forever.
+const toastEl = document.getElementById('toast');
+let pendingDelete = null;
+
+function showToast(message, actionLabel, actionFn){
+  toastEl.innerHTML = '';
+  const msg = document.createElement('span'); msg.textContent = message;
+  const btn = document.createElement('button'); btn.className = 'toast-action'; btn.textContent = actionLabel;
+  btn.addEventListener('click', actionFn);
+  toastEl.appendChild(msg); toastEl.appendChild(btn);
+  toastEl.classList.add('show');
+}
+function hideToast(){ toastEl.classList.remove('show'); }
+
+function deleteWorkout(entry){
+  if(pendingDelete) finalizePendingDelete();
+
+  const index = history.findIndex(h => h.id === entry.id);
+  if(index === -1) return;
+  history.splice(index, 1);
+  saveHistory();
+
+  const pending = loadPendingDeletes();
+  pending.push(entry);
+  savePendingDeletes(pending);
+
+  renderHistory(); renderCalendar();
+
+  pendingDelete = { entry, index };
+  showToast('Workout deleted', 'Undo', undoDelete);
+  pendingDelete.timeoutId = setTimeout(() => finalizePendingDelete(), 5000);
+}
+
+function undoDelete(){
+  if(!pendingDelete) return;
+  clearTimeout(pendingDelete.timeoutId);
+  history.splice(pendingDelete.index, 0, pendingDelete.entry);
+  saveHistory();
+  savePendingDeletes(loadPendingDeletes().filter(e => e.id !== pendingDelete.entry.id));
+  renderHistory(); renderCalendar();
+  pendingDelete = null;
+  hideToast();
+}
+
+function finalizePendingDelete(){
+  if(!pendingDelete) return;
+  clearTimeout(pendingDelete.timeoutId);
+  const { entry } = pendingDelete;
+  pendingDelete = null;
+  hideToast();
+  finalizeDeleteById(entry.id, entry);
+}
+
+// Attempts the remote cleanup for a queued deletion. Leaves it queued
+// (rather than dropping it) whenever the remote delete couldn't actually
+// happen yet, so it's retried on a later, signed-in/online session.
+async function finalizeDeleteById(id, entryHint){
+  const entry = entryHint || loadPendingDeletes().find(e => e.id === id);
+  if(!entry) return;
+
+  if(entry.synced){
+    if(!userEmail) return; // not signed in this session — retry later
+    try{ await deleteFromSheet(entry); }
+    catch(err){ return; } // offline or auth failure — retry later
+  }
+
+  savePendingDeletes(loadPendingDeletes().filter(e => e.id !== id));
+}
+
+async function flushStalePendingDeletes(){
+  const pending = loadPendingDeletes();
+  for(const entry of pending){
+    await finalizeDeleteById(entry.id, entry);
+  }
 }
 
 // ---------- Calendar ----------
@@ -411,6 +639,9 @@ const signedInBlock = document.getElementById('signedInBlock');
 const clientIdInput = document.getElementById('clientIdInput');
 const clientIdSave = document.getElementById('clientIdSave');
 const signInBtn = document.getElementById('signInBtn');
+const signInBtnLabel = document.getElementById('signInBtnLabel');
+const reconnectHint = document.getElementById('reconnectHint');
+const setupDetails = document.getElementById('setupDetails');
 const signOutBtn = document.getElementById('signOutBtn');
 const accountAvatar = document.getElementById('accountAvatar');
 const accountEmail = document.getElementById('accountEmail');
@@ -441,10 +672,20 @@ function setSyncStatus(kind, text){
 function updateAuthUI(){
   const hasClientId = !!localStorage.getItem(K_CLIENT_ID);
   const signedIn = !!accessToken && !!userEmail;
+  const needsReconnect = !signedIn && !!userEmail;
 
   signedOutBlock.style.display = signedIn ? 'none' : 'block';
   signedInBlock.style.display = signedIn ? 'block' : 'none';
   signInBtn.disabled = !hasClientId;
+  signInBtnLabel.textContent = needsReconnect ? 'Reconnect Google Account' : 'Sign in with Google';
+
+  if(needsReconnect){
+    reconnectHint.style.display = 'block';
+    reconnectHint.textContent = `Welcome back, ${userEmail} — your Google session isn't live right now. Tap below to reconnect and keep syncing.`;
+    if(setupDetails) setupDetails.open = false;
+  } else {
+    reconnectHint.style.display = 'none';
+  }
 
   if(signedIn){
     accountEmail.textContent = userEmail;
@@ -541,20 +782,45 @@ async function afterSignIn(){
     setSyncStatus('ok', 'Signed in. Preparing your Google Sheet…');
     await ensureSpreadsheet();
     updateAuthUI();
+
+    const hasRemoteTabs = sheetMetaCache && Object.keys(sheetMetaCache).some(t => t !== 'Overview');
+    if(history.length === 0 && hasRemoteTabs){
+      if(confirm('We found existing workouts in your Google Sheet. Restore them to this device?')){
+        setSyncStatus('ok', 'Restoring…');
+        const count = await restoreFromSheet();
+        setSyncStatus('ok', count > 0 ? `Restored ${count} workout${count===1?'':'s'} from your Sheet.` : 'Nothing to restore.');
+      }
+    }
+
+    await flushStalePendingDeletes();
     await syncAll(false);
   } catch(err){
-    setSyncStatus('err', 'Sign-in error: ' + err.message);
+    setSyncStatus('err', isAuthError(err) ? 'Sign-in didn\'t complete — please try again.' : 'Sign-in error: ' + err.message);
   }
+}
+
+// Recognizes GIS/OAuth failures specifically, so callers can point the user
+// at "reconnect your Google account" instead of a raw error string.
+function isAuthError(err){
+  const msg = (err && err.message) || '';
+  return /not configured|access_denied|interaction_required|consent_required|invalid_grant|login_required|token/i.test(msg);
 }
 
 async function getValidToken(){
   if(accessToken && Date.now() < tokenExpiry) return accessToken;
-  if(!tokenClient) throw new Error('Not configured');
+  if(!tokenClient){
+    accessToken = null; updateAuthUI();
+    throw new Error('Not configured');
+  }
   return new Promise((resolve, reject) => {
     tokenClient.callback = (resp) => {
-      if(resp.error) return reject(new Error(resp.error));
+      if(resp.error){
+        accessToken = null; updateAuthUI();
+        return reject(new Error(resp.error));
+      }
       accessToken = resp.access_token;
       tokenExpiry = Date.now() + (resp.expires_in * 1000) - 60000;
+      updateAuthUI();
       resolve(accessToken);
     };
     tokenClient.requestAccessToken({ prompt: '' });
@@ -905,7 +1171,11 @@ async function syncAll(showAlerts){
       else setSyncStatus('err', `${failed} entr${failed===1?'y':'ies'} failed to sync.`);
     }
   } catch(err){
-    if(showAlerts) setSyncStatus('err', 'Sync failed: ' + err.message);
+    if(showAlerts){
+      setSyncStatus('err', isAuthError(err)
+        ? 'Your Google session expired — tap "Sign in with Google" above to reconnect, then try again.'
+        : 'Sync failed: ' + err.message);
+    }
   }
 }
 sheetSyncNow.addEventListener('click', () => syncAll(true));
@@ -920,7 +1190,9 @@ restoreFromSheetBtn.addEventListener('click', async () => {
     setSyncStatus('ok', count > 0 ? `Restored ${count} workout${count===1?'':'s'} from Sheet.` : 'Nothing new to restore — already up to date.');
     refreshSyncBadge();
   } catch(err){
-    setSyncStatus('err', 'Restore failed: ' + err.message);
+    setSyncStatus('err', isAuthError(err)
+      ? 'Your Google session expired — tap "Sign in with Google" above to reconnect, then try again.'
+      : 'Restore failed: ' + err.message);
   } finally {
     restoreFromSheetBtn.disabled = false;
     restoreFromSheetBtn.textContent = originalText;
@@ -946,3 +1218,4 @@ if(current.exercises.length === 0){ addExercise(false); } else { renderExercises
 renderHistory();
 renderCalendar();
 updateAuthUI();
+flushStalePendingDeletes(); // clean up anything left over from a session that closed early
