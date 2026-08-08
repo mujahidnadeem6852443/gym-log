@@ -400,8 +400,10 @@ function commitToTodayEntry(newExercises, elapsedMs){
     existing.durationMs = (existing.durationMs || 0) + (elapsedMs || 0);
     saveEditedEntry(existing, mergedExercises); // exercises assign synchronously; Sheet sync runs in background
   } else {
+    const id = uid();
     const entry = {
-      id: uid(),
+      id,
+      mergedIds: [id],
       date: new Date().toISOString(),
       durationMs: elapsedMs || 0,
       exercises: newExercises,
@@ -651,8 +653,7 @@ async function saveEditedEntry(entry, newExercises){
   if(entry.synced && userEmail){
     try{
       const token = await getValidToken();
-      await deleteFromSheet(entry);
-      await syncEntry(token, entry);
+      await resyncEntryToSheet(token, entry);
       entry.synced = true;
     } catch(err){
       entry.synced = false;
@@ -776,11 +777,13 @@ function mergeHistoryByDay(entries){
   const byDay = new Map();
   const order = [];
   entries.forEach(entry => {
+    if(!entry.mergedIds) entry.mergedIds = [entry.id]; // backfill for entries saved before this field existed
     const key = dateKey(new Date(entry.date));
     if(byDay.has(key)){
       const base = byDay.get(key);
       base.exercises = base.exercises.concat(entry.exercises);
       base.durationMs = (base.durationMs || 0) + (entry.durationMs || 0);
+      base.mergedIds = base.mergedIds.concat(entry.mergedIds);
       base.synced = false;
     } else {
       byDay.set(key, entry);
@@ -1366,24 +1369,53 @@ async function deleteFromSheet(entry){
   const data = await getRes.json();
   const rowData = (data.sheets && data.sheets[0] && data.sheets[0].data && data.sheets[0].data[0] && data.sheets[0].data[0].rowData) || [];
 
-  const marker = 'wk:' + entry.id;
-  let minRow = null, maxRow = null;
+  // A merged (one-entry-per-day) record can carry rows tagged under several
+  // older ids that got folded into it — clean up all of them, not just the
+  // current id, so nothing orphaned is left for a future restore to find.
+  const markers = new Set((entry.mergedIds && entry.mergedIds.length ? entry.mergedIds : [entry.id]).map(id => 'wk:' + id));
+  const matchedRows = [];
   rowData.forEach((row, idx) => {
     const note = row.values && row.values[0] && row.values[0].note;
-    if(note === marker){
-      const sheetRow = idx + 2; // rowData[0] corresponds to sheet row 2
-      if(minRow === null || sheetRow < minRow) minRow = sheetRow;
-      if(maxRow === null || sheetRow > maxRow) maxRow = sheetRow;
-    }
+    if(note && markers.has(note)) matchedRows.push(idx + 2); // rowData[0] corresponds to sheet row 2
   });
-  if(minRow === null) return; // rows already gone or were never tagged
+  if(matchedRows.length === 0) return; // rows already gone or were never tagged
+
+  matchedRows.sort((a, b) => a - b);
+  const ranges = [];
+  let rangeStart = matchedRows[0], rangeEnd = matchedRows[0];
+  for(let i = 1; i < matchedRows.length; i++){
+    if(matchedRows[i] === rangeEnd + 1){ rangeEnd = matchedRows[i]; }
+    else { ranges.push([rangeStart, rangeEnd]); rangeStart = rangeEnd = matchedRows[i]; }
+  }
+  ranges.push([rangeStart, rangeEnd]);
+
+  // Highest row range first within the same batch, so deleting one range
+  // never shifts the row numbers already computed for another.
+  const requests = ranges
+    .sort((a, b) => b[0] - a[0])
+    .map(([start, end]) => ({ deleteDimension:{ range:{ sheetId, dimension:'ROWS', startIndex: start - 1, endIndex: end } } }));
 
   const delRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
     method:'POST',
     headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
-    body: JSON.stringify({ requests:[ { deleteDimension:{ range:{ sheetId, dimension:'ROWS', startIndex: minRow-1, endIndex: maxRow } } } ] })
+    body: JSON.stringify({ requests })
   });
   if(!delRes.ok) throw new Error('Sheet delete failed (' + delRes.status + ')');
+}
+
+// The one safe way to put an entry's current exercises in the Sheet,
+// whether it's brand new or being re-synced after a local edit/merge:
+// always clear out anything already tagged for it first, then append fresh.
+// deleteFromSheet is a no-op when there's nothing tagged yet, so this is
+// exactly as cheap for a first-ever sync as calling syncEntry alone was —
+// it just also guarantees a stale prior sync can never be duplicated.
+async function resyncEntryToSheet(token, entry){
+  await deleteFromSheet(entry);
+  await syncEntry(token, entry);
+  // Rows are now tagged fresh under entry.id only, so any ids merged in
+  // from other local entries no longer exist in the Sheet under their own
+  // tags — stop tracking them, keeping mergedIds from growing forever.
+  entry.mergedIds = [entry.id];
 }
 
 function parseSheetTitleToDateParts(title){
@@ -1423,7 +1455,11 @@ async function restoreFromSheet(){
   if(!res.ok) throw new Error('Could not read spreadsheet (' + res.status + ')');
   const data = await res.json();
 
-  const existingIds = new Set(history.map(h => h.id));
+  // Flatten mergedIds too, not just the current top-level id — otherwise a
+  // workout that was already folded into another day's entry (and so no
+  // longer has an entry of its own) looks "new" again on every restore.
+  const existingIds = new Set();
+  history.forEach(h => (h.mergedIds && h.mergedIds.length ? h.mergedIds : [h.id]).forEach(id => existingIds.add(id)));
   const restored = [];
 
   (data.sheets || []).forEach(sheet => {
@@ -1476,7 +1512,7 @@ async function restoreFromSheet(){
       const entryDate = new Date(dateParts.year, dateParts.month, dateParts.day, hh, mm);
       const durationMs = durationAssigned ? 0 : tabDurationMs;
       durationAssigned = true;
-      restored.push({ id: g.workoutId, date: entryDate.toISOString(), durationMs, exercises, synced: true });
+      restored.push({ id: g.workoutId, mergedIds: [g.workoutId], date: entryDate.toISOString(), durationMs, exercises, synced: true });
       existingIds.add(g.workoutId);
     });
   });
@@ -1511,7 +1547,7 @@ async function syncAll(showAlerts){
     if(!spreadsheetId) await ensureSpreadsheet();
     let failed = 0;
     for(const entry of pending){
-      try{ await syncEntry(token, entry); entry.synced = true; }
+      try{ await resyncEntryToSheet(token, entry); entry.synced = true; }
       catch(e){ failed++; }
     }
     saveHistory();
