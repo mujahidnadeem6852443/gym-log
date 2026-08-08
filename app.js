@@ -418,6 +418,7 @@ const sheetLink = document.getElementById('sheetLink');
 const unitKgBtn = document.getElementById('unitKgBtn');
 const unitLbBtn = document.getElementById('unitLbBtn');
 const sheetSyncNow = document.getElementById('sheetSyncNow');
+const restoreFromSheetBtn = document.getElementById('restoreFromSheetBtn');
 const syncStatus = document.getElementById('syncStatus');
 const syncStatusText = document.getElementById('syncStatusText');
 const syncBadge = document.getElementById('syncBadge');
@@ -778,6 +779,101 @@ async function deleteFromSheet(entry){
   if(!delRes.ok) throw new Error('Sheet delete failed (' + delRes.status + ')');
 }
 
+function parseSheetTitleToDateParts(title){
+  const m = /^(\d{1,2}) ([A-Za-z]{3}) (\d{4})$/.exec((title || '').trim());
+  if(!m) return null;
+  const monthIdx = MONTH_SHORT.indexOf(m[2]);
+  if(monthIdx === -1) return null;
+  return { day: parseInt(m[1], 10), month: monthIdx, year: parseInt(m[3], 10) };
+}
+
+function parseSeparatorTime(text){
+  const m = /—\s*(\d{1,2}):(\d{2})\s*([AP]M)\s*—/i.exec(text || '');
+  if(!m) return null;
+  let hours = parseInt(m[1], 10);
+  const minutes = parseInt(m[2], 10);
+  const isPM = /PM/i.test(m[3]);
+  if(isPM && hours !== 12) hours += 12;
+  if(!isPM && hours === 12) hours = 0;
+  return { hours, minutes };
+}
+
+// Rebuilds local workout entries from whatever is currently sitting in the
+// Sheet, using the same "wk:<id>" row notes that power remote delete to
+// regroup rows back into distinct workouts — so a wiped phone or a brand
+// new device can recover everything except the session duration (never
+// written to the Sheet in the first place).
+async function restoreFromSheet(){
+  if(!userEmail) throw new Error('Not signed in');
+  const token = await getValidToken();
+  if(!spreadsheetId) await ensureSpreadsheet();
+
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}` +
+    `?fields=${encodeURIComponent('sheets(properties(title),data(rowData(values(formattedValue,note))))')}`,
+    { headers:{ Authorization:'Bearer '+token } }
+  );
+  if(!res.ok) throw new Error('Could not read spreadsheet (' + res.status + ')');
+  const data = await res.json();
+
+  const existingIds = new Set(history.map(h => h.id));
+  const restored = [];
+
+  (data.sheets || []).forEach(sheet => {
+    const title = sheet.properties.title;
+    if(title === 'Overview') return;
+    const dateParts = parseSheetTitleToDateParts(title);
+    if(!dateParts) return;
+
+    const rowData = (sheet.data && sheet.data[0] && sheet.data[0].rowData) || [];
+    const groups = [];
+    let current = null;
+    for(let i = 1; i < rowData.length; i++){ // row 0 is the header
+      const cells = rowData[i].values || [];
+      const note = cells[0] && cells[0].note;
+      if(!note || !note.startsWith('wk:')){ current = null; continue; }
+      const workoutId = note.slice(3);
+      if(!current || current.workoutId !== workoutId){
+        current = { workoutId, rows: [] };
+        groups.push(current);
+      }
+      current.rows.push(cells.map(c => (c && c.formattedValue) || ''));
+    }
+
+    groups.forEach(g => {
+      if(existingIds.has(g.workoutId)) return;
+
+      let rows = g.rows;
+      let hh = 12, mm = 0;
+      const sepTime = rows[0] && /^—/.test(rows[0][0]) ? parseSeparatorTime(rows[0][0]) : null;
+      if(sepTime){ hh = sepTime.hours; mm = sepTime.minutes; rows = rows.slice(1); }
+
+      const exercises = rows.filter(r => r[0]).map(r => {
+        const repsParts = (r[2] || '').split('+');
+        const weightParts = (r[3] || '').split('+');
+        const sets = repsParts.map((rp, i) => ({
+          reps: (rp === '-' || rp === '') ? '' : Number(rp),
+          weight: (weightParts[i] === '-' || weightParts[i] == null || weightParts[i] === '') ? '' : Number(weightParts[i])
+        }));
+        return { name: r[0], sets };
+      });
+      if(exercises.length === 0) return;
+
+      const entryDate = new Date(dateParts.year, dateParts.month, dateParts.day, hh, mm);
+      restored.push({ id: g.workoutId, date: entryDate.toISOString(), durationMs: 0, exercises, synced: true });
+      existingIds.add(g.workoutId);
+    });
+  });
+
+  if(restored.length){
+    history = history.concat(restored).sort((a, b) => new Date(b.date) - new Date(a.date));
+    saveHistory();
+    renderHistory();
+    renderCalendar();
+  }
+  return restored.length;
+}
+
 async function syncAll(showAlerts){
   const hasClientId = !!localStorage.getItem(K_CLIENT_ID);
   if(!hasClientId){
@@ -813,6 +909,23 @@ async function syncAll(showAlerts){
   }
 }
 sheetSyncNow.addEventListener('click', () => syncAll(true));
+
+restoreFromSheetBtn.addEventListener('click', async () => {
+  if(!confirm('Rebuild workout history from your Google Sheet? Anything already saved on this phone stays untouched — this only adds workouts found in the Sheet that aren\'t here yet.')) return;
+  restoreFromSheetBtn.disabled = true;
+  const originalText = restoreFromSheetBtn.textContent;
+  restoreFromSheetBtn.textContent = 'Restoring…';
+  try{
+    const count = await restoreFromSheet();
+    setSyncStatus('ok', count > 0 ? `Restored ${count} workout${count===1?'':'s'} from Sheet.` : 'Nothing new to restore — already up to date.');
+    refreshSyncBadge();
+  } catch(err){
+    setSyncStatus('err', 'Restore failed: ' + err.message);
+  } finally {
+    restoreFromSheetBtn.disabled = false;
+    restoreFromSheetBtn.textContent = originalText;
+  }
+});
 
 // GIS script loads async; poll briefly until it's ready, then wire up the token client.
 (function waitForGis(tries){
