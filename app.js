@@ -6,14 +6,14 @@ const K_CLIENT_ID = 'gymlog_client_id';
 const K_WEIGHT_UNIT = 'gymlog_weight_unit';
 const K_LAST_EMAIL = 'gymlog_last_email';
 const K_PENDING_DELETES = 'gymlog_pending_deletes';
-const K_TEMPLATES = 'gymlog_templates';
+const K_EXERCISE_DICT = 'gymlog_exercise_dict';
 function sheetIdKey(email){ return 'gymlog_sheet_id_' + email; }
 
 // ---------- State ----------
 let current = loadCurrent();
 let history = loadHistory();
 let timer = loadTimer();
-let templates = loadTemplates();
+let exerciseDict = loadExerciseDict();
 
 function loadCurrent(){ try{ const r=localStorage.getItem(K_CURRENT); if(r) return JSON.parse(r); }catch(e){} return { exercises: [] }; }
 function saveCurrent(){ localStorage.setItem(K_CURRENT, JSON.stringify(current)); }
@@ -23,8 +23,8 @@ function loadTimer(){ try{ const r=localStorage.getItem(K_TIMER); if(r) return J
 function saveTimer(){ localStorage.setItem(K_TIMER, JSON.stringify(timer)); }
 function loadPendingDeletes(){ try{ const r=localStorage.getItem(K_PENDING_DELETES); if(r) return JSON.parse(r); }catch(e){} return []; }
 function savePendingDeletes(list){ localStorage.setItem(K_PENDING_DELETES, JSON.stringify(list)); }
-function loadTemplates(){ try{ const r=localStorage.getItem(K_TEMPLATES); if(r) return JSON.parse(r); }catch(e){} return []; }
-function saveTemplates(list){ localStorage.setItem(K_TEMPLATES, JSON.stringify(list)); }
+function loadExerciseDict(){ try{ const r=localStorage.getItem(K_EXERCISE_DICT); if(r) return JSON.parse(r); }catch(e){} return []; }
+function saveExerciseDict(list){ localStorage.setItem(K_EXERCISE_DICT, JSON.stringify(list)); }
 function uid(){ return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2,10)); }
 function getWeightUnit(){ return localStorage.getItem(K_WEIGHT_UNIT) || 'kg'; }
 
@@ -68,23 +68,42 @@ timerResetBtn.addEventListener('click', () => {
 setInterval(() => { if(timer.running) renderTimer(); }, 1000);
 renderTimer();
 
-// ---------- Exercise library (derived from history, no separate storage) ----------
-// Every exercise name ever logged, deduped case-insensitively (keeping whichever
-// casing was used most recently) and ordered by recency of use. This both
-// powers autocomplete and is the lookup key for "last time" performance.
+// ---------- Exercise dictionary ----------
+// A standalone, persistent list of exercise names — separate from history,
+// so a name is remembered (and shows up in autocomplete) the moment you
+// type it, not only after the whole workout gets saved. Most-recently-used
+// name sits at the front; matching is case-insensitive so "Bench Press" and
+// "bench press" collapse into one remembered entry (keeping whichever
+// casing you used last).
+function rememberExerciseName(name){
+  const trimmed = sanitizeText(name).trim();
+  if(!trimmed) return;
+  const key = trimmed.toLowerCase();
+  exerciseDict = exerciseDict.filter(n => n.toLowerCase() !== key);
+  exerciseDict.unshift(trimmed);
+  if(exerciseDict.length > 300) exerciseDict.length = 300;
+  saveExerciseDict(exerciseDict);
+}
+
+// Dictionary entries first (most-recent-first), then anything already in
+// history that somehow isn't in the dictionary yet (e.g. workouts restored
+// from the Sheet before this feature existed) — so nothing already logged
+// is ever missing from suggestions.
 function getExerciseSuggestions(){
   const seen = new Map();
+  let order = 0;
+  exerciseDict.forEach(name => {
+    const key = name.toLowerCase();
+    if(!seen.has(key)) seen.set(key, { name, order: order++ });
+  });
   history.forEach(entry => {
     entry.exercises.forEach(ex => {
       const key = ex.name.trim().toLowerCase();
-      if(!key) return;
-      const existing = seen.get(key);
-      if(!existing || new Date(entry.date) > new Date(existing.lastUsed)){
-        seen.set(key, { name: ex.name.trim(), lastUsed: entry.date });
-      }
+      if(!key || seen.has(key)) return;
+      seen.set(key, { name: ex.name.trim(), order: order++ });
     });
   });
-  return [...seen.values()].sort((a, b) => new Date(b.lastUsed) - new Date(a.lastUsed)).map(v => v.name);
+  return [...seen.values()].sort((a, b) => a.order - b.order).map(v => v.name);
 }
 
 // history is stored newest-first, so the first exercise-name match found is
@@ -101,10 +120,6 @@ function getLastPerformance(exerciseName){
 
 function formatSetsInline(sets){
   return sets.map(s => `${s.weight === '' ? '-' : s.weight}×${s.reps === '' ? '-' : s.reps}`).join(', ');
-}
-
-function currentHasContent(){
-  return current.exercises.some(ex => ex.name.trim() !== '' || ex.sets.some(s => s.reps !== '' || s.weight !== ''));
 }
 
 // Wraps a text input with a lightweight, mobile-reliable suggestion dropdown.
@@ -151,8 +166,6 @@ function attachExerciseAutocomplete(input, onSelect){
 const exerciseList = document.getElementById('exerciseList');
 const addExerciseBtn = document.getElementById('addExerciseBtn');
 const saveWorkoutBtn = document.getElementById('saveWorkoutBtn');
-const copyLastWorkoutBtn = document.getElementById('copyLastWorkoutBtn');
-const templateRow = document.getElementById('templateRow');
 
 function addExercise(focus){
   const ex = { id: uid(), name:'', sets:[{reps:'', weight:''}] };
@@ -213,7 +226,8 @@ function renderExercises(focusId){
     card.appendChild(lastPerfEl);
 
     nameInput.addEventListener('input', e => { ex.name = e.target.value; saveCurrent(); updateLastPerf(); });
-    attachExerciseAutocomplete(nameInput, (name) => { ex.name = name; saveCurrent(); updateLastPerf(); });
+    nameInput.addEventListener('blur', () => rememberExerciseName(ex.name));
+    attachExerciseAutocomplete(nameInput, (name) => { ex.name = name; saveCurrent(); updateLastPerf(); rememberExerciseName(name); });
 
     ex.sets.forEach((set, idx) => {
       const row = document.createElement('div');
@@ -256,93 +270,6 @@ function renderExercises(focusId){
 
 addExerciseBtn.addEventListener('click', () => addExercise(true));
 
-// ---------- Copy Last Workout ----------
-// Carries over exercise names AND the actual reps/weight from your most
-// recent saved session, so you're adjusting numbers rather than retyping
-// everything from scratch.
-function copyLastWorkout(){
-  if(history.length === 0){ alert('No previous workouts to copy yet.'); return; }
-  if(currentHasContent() && !confirm('Replace what you\'ve entered so far with your last workout?')) return;
-
-  const last = history[0];
-  current = {
-    exercises: last.exercises.map(ex => ({
-      id: uid(),
-      name: ex.name,
-      sets: ex.sets.map(s => ({ reps: s.reps, weight: s.weight }))
-    }))
-  };
-  saveCurrent();
-  renderExercises();
-}
-copyLastWorkoutBtn.addEventListener('click', copyLastWorkout);
-
-// ---------- Workout templates ----------
-// A template captures exercise names + how many sets each has — deliberately
-// no reps/weight, since those change session to session (that's what Copy
-// Last Workout is for). Starting from a template gives you blank sets ready
-// to fill in, with "Last:" performance still showing per exercise.
-function renderTemplates(){
-  templateRow.innerHTML = '';
-  templates.forEach(tpl => {
-    const chip = document.createElement('div');
-    chip.className = 'template-chip';
-
-    const label = document.createElement('span');
-    label.className = 'template-chip-label';
-    label.textContent = tpl.name;
-    label.addEventListener('click', () => useTemplate(tpl));
-
-    const del = document.createElement('button');
-    del.className = 'tpl-del';
-    del.textContent = '✕';
-    del.setAttribute('aria-label', 'Delete template ' + tpl.name);
-    del.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if(!confirm(`Delete the "${tpl.name}" template?`)) return;
-      templates = templates.filter(t => t.id !== tpl.id);
-      saveTemplates(templates);
-      renderTemplates();
-    });
-
-    chip.appendChild(label); chip.appendChild(del);
-    templateRow.appendChild(chip);
-  });
-
-  const addChip = document.createElement('button');
-  addChip.className = 'template-chip-add';
-  addChip.textContent = '+ Save as Template';
-  addChip.addEventListener('click', saveCurrentAsTemplate);
-  templateRow.appendChild(addChip);
-}
-
-function saveCurrentAsTemplate(){
-  const real = current.exercises.filter(ex => ex.name.trim() !== '');
-  if(real.length === 0){ alert('Add at least one named exercise before saving a template.'); return; }
-  const name = prompt('Name this template (e.g. "Push Day"):');
-  if(!name || !name.trim()) return;
-  templates.push({
-    id: uid(),
-    name: sanitizeText(name).trim(),
-    exercises: real.map(ex => ({ name: ex.name.trim(), setCount: Math.max(1, ex.sets.length) }))
-  });
-  saveTemplates(templates);
-  renderTemplates();
-}
-
-function useTemplate(tpl){
-  if(currentHasContent() && !confirm(`Start "${tpl.name}"? This replaces what you've entered so far.`)) return;
-  current = {
-    exercises: tpl.exercises.map(ex => ({
-      id: uid(),
-      name: ex.name,
-      sets: Array.from({ length: ex.setCount }, () => ({ reps:'', weight:'' }))
-    }))
-  };
-  saveCurrent();
-  renderExercises();
-}
-
 saveWorkoutBtn.addEventListener('click', () => {
   const cleanExercises = current.exercises
     .map(ex => ({
@@ -357,6 +284,8 @@ saveWorkoutBtn.addEventListener('click', () => {
     .filter(ex => ex.sets.length > 0);
 
   if(cleanExercises.length === 0){ alert('Log at least one set before saving.'); return; }
+
+  cleanExercises.forEach(ex => rememberExerciseName(ex.name));
 
   const entry = {
     id: uid(),
@@ -506,7 +435,8 @@ function renderEditForm(container, entry){
       const nameInput = document.createElement('input');
       nameInput.className = 'exercise-name'; nameInput.placeholder = 'Exercise name'; nameInput.value = ex.name;
       nameInput.addEventListener('input', e => { ex.name = e.target.value; });
-      attachExerciseAutocomplete(nameInput, (name) => { ex.name = name; });
+      nameInput.addEventListener('blur', () => rememberExerciseName(ex.name));
+      attachExerciseAutocomplete(nameInput, (name) => { ex.name = name; rememberExerciseName(name); });
       const rmEx = document.createElement('button');
       rmEx.className = 'remove-exercise'; rmEx.textContent = '✕'; rmEx.setAttribute('aria-label', 'Remove exercise');
       rmEx.addEventListener('click', () => { draft.splice(exIdx, 1); renderDraftExercises(); });
@@ -590,6 +520,7 @@ function renderEditForm(container, entry){
 
 async function saveEditedEntry(entry, newExercises){
   entry.exercises = newExercises;
+  newExercises.forEach(ex => rememberExerciseName(ex.name));
   if(entry.synced && userEmail){
     try{
       const token = await getValidToken();
@@ -1323,6 +1254,7 @@ async function restoreFromSheet(){
   if(restored.length){
     history = history.concat(restored).sort((a, b) => new Date(b.date) - new Date(a.date));
     saveHistory();
+    restored.forEach(entry => entry.exercises.forEach(ex => rememberExerciseName(ex.name)));
     renderHistory();
     renderCalendar();
   }
@@ -1406,6 +1338,5 @@ if('serviceWorker' in navigator){
 if(current.exercises.length === 0){ addExercise(false); } else { renderExercises(); }
 renderHistory();
 renderCalendar();
-renderTemplates();
 updateAuthUI();
 flushStalePendingDeletes(); // clean up anything left over from a session that closed early

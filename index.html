@@ -201,21 +201,6 @@
   }
   .last-performance b{color:var(--blue); font-weight:700;}
 
-  /* Templates */
-  .template-row{display:flex; gap:8px; overflow-x:auto; padding-bottom:2px; margin-bottom:10px; -webkit-overflow-scrolling:touch;}
-  .template-chip{
-    display:flex; align-items:center; gap:4px; background:var(--panel-2); border:1px solid var(--line);
-    border-radius:20px; padding:8px 6px 8px 14px; font-size:13px; font-weight:700; color:var(--text);
-    white-space:nowrap; flex-shrink:0;
-  }
-  .template-chip-label{cursor:pointer;}
-  .template-chip .tpl-del{background:none; border:none; color:var(--muted); font-size:15px; padding:4px 8px; line-height:1;}
-  .template-chip-add{
-    background:transparent; border:1px dashed var(--line); border-radius:20px; padding:8px 14px;
-    font-size:13px; color:var(--muted); font-weight:700; white-space:nowrap; flex-shrink:0;
-  }
-  .copy-last-btn{width:100%; margin-bottom:12px;}
-
   .set-row{display:grid; grid-template-columns:22px 1fr 1fr 30px; gap:8px; align-items:center; margin-bottom:8px;}
   .set-num{font-family:var(--mono); color:var(--muted); font-size:13px; text-align:center;}
   .set-field{display:flex; flex-direction:column;}
@@ -396,8 +381,6 @@
 
 <section>
   <div class="section-title">Today's Workout</div>
-  <div class="template-row" id="templateRow"></div>
-  <button class="btn-ghost copy-last-btn" id="copyLastWorkoutBtn">Copy Last Workout</button>
   <div id="exerciseList"></div>
   <button class="add-exercise-btn" id="addExerciseBtn">+ Add Exercise</button>
   <button class="save-workout-btn btn-stop" id="saveWorkoutBtn">Save Workout</button>
