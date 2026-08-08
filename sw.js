@@ -1,4 +1,4 @@
-const CACHE = 'gymlog-shell-v1';
+const CACHE = 'gymlog-shell-v2';
 const SHELL = [
   './',
   './index.html',
@@ -20,22 +20,25 @@ self.addEventListener('activate', (e) => {
   self.clients.claim();
 });
 
-// Only cache same-origin app-shell requests. Google auth/API calls must always
-// go to the network and are never intercepted here.
+// Only handle same-origin app-shell requests. Google auth/API calls must always
+// go straight to the network and are never intercepted here.
+//
+// Network-first: when you're online, you always get the current version of
+// the app (no stuck-on-old-code confusion after an update). Only when the
+// network request actually fails (you're offline) do we fall back to
+// whatever was last cached, so the app still opens and logging still works
+// with no connection.
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (url.origin !== location.origin || e.request.method !== 'GET') return;
 
   e.respondWith(
-    caches.match(e.request).then((cached) => {
-      const network = fetch(e.request)
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(e.request, copy));
-          return res;
-        })
-        .catch(() => cached);
-      return cached || network;
-    })
+    fetch(e.request)
+      .then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(e.request, copy));
+        return res;
+      })
+      .catch(() => caches.match(e.request))
   );
 });

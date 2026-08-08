@@ -240,12 +240,23 @@ function renderHistory(){
     actions.className = 'hist-actions';
     const delBtn = document.createElement('button');
     delBtn.className = 'btn-danger'; delBtn.textContent = 'Delete';
-    delBtn.addEventListener('click', (e) => {
+    delBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const msg = entry.synced
-        ? 'Delete this workout from the app? It will stay in your Google Sheet — delete it there too if you want it fully gone.'
+        ? 'Delete this workout? It will also be removed from your Google Sheet.'
         : 'Delete this workout? This cannot be undone.';
       if(!confirm(msg)) return;
+
+      if(entry.synced && userEmail){
+        delBtn.disabled = true;
+        delBtn.textContent = 'Deleting…';
+        try{
+          await deleteFromSheet(entry);
+        } catch(err){
+          alert('Deleted from the app, but couldn\'t reach Google Sheets to remove it there too (check your connection). You may need to delete its rows from the "' + sheetTitleForDate(entry.date) + '" tab yourself.');
+        }
+      }
+
       history = history.filter(h => h.id !== entry.id);
       saveHistory(); renderHistory(); renderCalendar();
     });
@@ -669,9 +680,31 @@ async function ensureDateSheet(token, title){
   return sheetId;
 }
 
+// Every row written for a given workout gets an invisible note on column A
+// (e.g. "wk:<id>") so we can find and remove exactly those rows later if the
+// workout is deleted — without adding a visible ID column to the table.
+async function tagRowsWithWorkoutId(token, sheetId, updatedRange, workoutId){
+  const m = /!A(\d+):D(\d+)/.exec(updatedRange || '');
+  if(!m) return;
+  const start = parseInt(m[1], 10);
+  const end = parseInt(m[2], 10);
+  const rows = Array.from({ length: end - start + 1 }, () => ({ values:[ { note:'wk:' + workoutId } ] }));
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+    method:'POST',
+    headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
+    body: JSON.stringify({ requests:[ {
+      updateCells:{
+        range:{ sheetId, startRowIndex:start-1, endRowIndex:end, startColumnIndex:0, endColumnIndex:1 },
+        rows,
+        fields:'note'
+      }
+    } ] })
+  });
+}
+
 async function syncEntry(token, entry){
   const title = sheetTitleForDate(entry.date);
-  await ensureDateSheet(token, title);
+  const sheetId = await ensureDateSheet(token, title);
 
   // If this tab already has rows from an earlier workout logged the same day,
   // add a small time-stamped separator so the two sessions don't blend together.
@@ -695,6 +728,54 @@ async function syncEntry(token, entry){
     { method:'POST', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values: rows }) }
   );
   if(!appendRes.ok) throw new Error('Append failed for "' + title + '" (' + appendRes.status + ')');
+  const appendData = await appendRes.json();
+  const updatedRange = appendData.updates && appendData.updates.updatedRange;
+
+  try{ await tagRowsWithWorkoutId(token, sheetId, updatedRange, entry.id); }
+  catch(e){ /* best-effort — losing the tag just means a future delete can't auto-clean this one */ }
+}
+
+// Finds the rows tagged for this workout in its date tab and removes them.
+// Returns quietly (no throw) if the workout was never synced, its tab is
+// gone, or the rows can't be found — deletion is always best-effort so it
+// never blocks the local delete.
+async function deleteFromSheet(entry){
+  if(!userEmail) return;
+  const token = await getValidToken();
+  if(!spreadsheetId) await ensureSpreadsheet();
+  const title = sheetTitleForDate(entry.date);
+  if(!sheetMetaCache) await loadSheetMeta(token);
+  let sheetId = sheetMetaCache[title];
+  if(sheetId == null) return; // no tab for that date — nothing to remove
+
+  const getRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}` +
+    `?ranges=${encodeURIComponent(`'${title}'!A2:A2000`)}` +
+    `&fields=${encodeURIComponent('sheets.data.rowData.values.note')}`,
+    { headers:{ Authorization:'Bearer '+token } }
+  );
+  if(!getRes.ok) throw new Error('Could not read sheet (' + getRes.status + ')');
+  const data = await getRes.json();
+  const rowData = (data.sheets && data.sheets[0] && data.sheets[0].data && data.sheets[0].data[0] && data.sheets[0].data[0].rowData) || [];
+
+  const marker = 'wk:' + entry.id;
+  let minRow = null, maxRow = null;
+  rowData.forEach((row, idx) => {
+    const note = row.values && row.values[0] && row.values[0].note;
+    if(note === marker){
+      const sheetRow = idx + 2; // rowData[0] corresponds to sheet row 2
+      if(minRow === null || sheetRow < minRow) minRow = sheetRow;
+      if(maxRow === null || sheetRow > maxRow) maxRow = sheetRow;
+    }
+  });
+  if(minRow === null) return; // rows already gone or were never tagged
+
+  const delRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+    method:'POST',
+    headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
+    body: JSON.stringify({ requests:[ { deleteDimension:{ range:{ sheetId, dimension:'ROWS', startIndex: minRow-1, endIndex: maxRow } } } ] })
+  });
+  if(!delRes.ok) throw new Error('Sheet delete failed (' + delRes.status + ')');
 }
 
 async function syncAll(showAlerts){
