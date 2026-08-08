@@ -26,23 +26,31 @@ see or write to their own sheet — one Google account, one private spreadsheet.
 ### The spreadsheet layout
 
 The first time you sign in, the app creates **"Gym Log Data"** in your Drive
-with three tabs:
+with one **Overview** tab. From then on, every day you log a workout gets its
+own tab, named by date — e.g. **"8 Aug 2026"**. Open that tab and you'll see
+a plain table, one row per exercise:
 
-- **Log** — one row per *set*: `Date, Weekday, Month, Time, Workout ID,
-  Exercise, Set #, Reps, Weight, Unit, Set Volume`. This is the raw data —
-  every rep/weight you ever enter, exactly as recorded.
-- **Sessions** — one row per *workout*: `Date, Weekday, Month, Start Time, End
-  Time, Duration, Exercises, Sets, Total Volume, Workout ID`. Good for
-  tracking session length and how much total weight you moved.
-- **Summary** — a live formula (`QUERY`) that totals volume and sets per
-  month automatically as new rows land in Log. Open it any time — no manual
-  refresh needed.
+| Exercise    | Sets | Reps     | Weight (KG) |
+|-------------|------|----------|-------------|
+| Cable Rows  | 3    | 12+12+10 | 60+55+55    |
 
-Dates are written as real `YYYY-MM-DD` values and a separate `Month` column
-(`YYYY-MM`) is included specifically so you can sort, filter, or pivot by
-month cleanly — this is what makes "day and month aligned" analysis easy:
-select any column in Sheets and use **Data > Create a filter**, or
-**Insert > Pivot table**, to slice by exercise, month, or day.
+- **Sets** is how many sets you did for that exercise.
+- **Reps** and **Weight** list every set's value, in order, joined with `+` —
+  so `12+12+10` means set 1 was 12 reps, set 2 was 12, set 3 was 10, and the
+  weight column lines up the same way set-for-set.
+
+No duration, no volume, no workout IDs — just the plain log. (The app still
+shows your session timer locally in the History list on your phone; it's
+just not written to the Sheet.)
+
+If you log a second workout on the same date, its rows are appended below
+the first, separated by a small `— 7:32 PM —` marker row so the two sessions
+stay visually distinct.
+
+Because each day is its own tab, you can jump straight to any date from the
+tab bar at the bottom of Google Sheets, or use **Data > Create a filter** /
+right-click a tab > **Copy to** if you want to build your own combined view
+or chart across days later.
 
 ---
 
@@ -59,7 +67,7 @@ does not require publishing or verifying anything.
 3. Go to **APIs & Services → Library**, search for and **Enable**:
    - Google Sheets API
    - Google Drive API
-4. Go to **APIs & Services → OAuth consent screen**.
+4. Go to **APIs & Services →   screen**.
    - User Type: **External**.
    - Fill in an app name ("Gym Log"), your email as support/contact email.
    - Scopes: you can skip adding any here (the app requests them at sign-in).
