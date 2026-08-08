@@ -1,252 +1,696 @@
-# Gym Log
+# 🏋️ Gym Log
 
-A fast, offline-first workout logger. Every set you log is saved on your phone
-instantly, and — once you sign in with your own Google account — mirrored into
-a **Google Sheet that lives in your own Google Drive**. No app store, no
-server, no monthly cost.
+A fast, mobile-first, offline-first workout logger built for simple strength-training tracking.
+
+Gym Log lets you record exercises, sets, reps, weights, muscle groups, and workout duration directly from your phone. Your workout is saved locally as you type, so the app continues working even without an internet connection.
+
+Optionally, you can sign in with Google and sync your workout history to a private Google Sheet stored inside your own Google Drive.
+
+No backend server.  
+No database subscription.  
+No App Store.  
+No monthly cost.
 
 ---
 
-## How it works
+## 🌐 Live App
 
+**Gym Log:**  
+https://mujahidnadeem6852443.github.io/gym-log/
+
+The app can also be installed on your phone as a Progressive Web App (PWA).
+
+---
+
+## ✨ Features
+
+### Workout Logging
+
+Log:
+
+- Exercise name
+- Muscle group
+- Sets
+- Reps
+- Weight
+- Workout duration
+
+Exercises can contain as many sets as needed.
+
+Your current workout is automatically saved locally while you are entering it.
+
+### ⏱ Workout Timer
+
+Gym Log includes a built-in session stopwatch.
+
+You can:
+
+- Start the timer
+- Stop the timer
+- Reset it
+- Save workout time independently from exercises
+
+Workout duration is stored with the day's workout and can also be synchronized to Google Sheets.
+
+### 📅 Workout Calendar
+
+The calendar highlights days where workouts were recorded.
+
+Workout days can show short muscle-group indicators such as:
+
+- `C` — Chest
+- `B` — Back
+- `Bi` — Biceps
+- `Tri` — Triceps
+- `S` — Shoulders
+- `L` — Legs
+- `A` — Abs
+
+For example:
+
+```text
+C/Tri
 ```
-Your phone (browser)
+
+means Chest and Triceps were trained that day.
+
+Tap a workout day to see the exercises and sets recorded for that date.
+
+### 📖 Workout History
+
+Gym Log keeps one main history record per calendar day.
+
+If you:
+
+1. Save part of a workout
+2. Add more exercises later
+3. Save again
+4. Save additional workout time
+
+the information is merged into that day's workout instead of creating unnecessary duplicate history entries.
+
+Saved workouts can also be edited from history.
+
+---
+
+## 💾 Can I Use Gym Log Without Signing In?
+
+**Yes.**
+
+Google sign-in is not required for normal local workout logging.
+
+Without signing in, Gym Log uses browser `localStorage`, so you can still:
+
+- Log workouts
+- Add exercises
+- Record sets, reps, and weight
+- Select muscle groups
+- Use the workout timer
+- Save workout duration
+- View history
+- Use the calendar
+- Edit locally stored workouts
+
+### Limitation of local-only mode
+
+Your workout data belongs to that browser/device.
+
+If you clear site data, switch browsers, reset the phone, or lose the device, local-only history can be lost.
+
+Google sign-in adds the cloud backup, sync, and restore layer.
+
+---
+
+## ☁️ Google Sheets Sync
+
+When you sign in with Google, Gym Log can mirror your workout data into a private Google Sheet in your own Google Drive.
+
+```text
+Phone / Browser
+      |
+      |---- localStorage
+      |
+      |---- Google OAuth
+                |
+                v
+        Google Drive API
+        Google Sheets API
+                |
+                v
+          Gym Log Data
+          Google Sheet
+```
+
+There is no Gym Log backend server.
+
+The browser communicates directly with Google's APIs.
+
+---
+
+## 👤 Separate Data for Every Google Account
+
+Each Google account gets its own private spreadsheet.
+
+```text
+User A
    |
-   |-- localStorage  (always-on local database — works with no internet)
+   v
+User A's Google Drive
    |
-   `-- Google Sheets API  (direct browser -> Google, no middle server)
+   v
+Gym Log Data
+```
+
+```text
+User B
+   |
+   v
+User B's Google Drive
+   |
+   v
+Gym Log Data
+```
+
+Two users' workouts do not mix into one Sheet.
+
+The same OAuth Client ID can be used by multiple authorized users, while each signed-in Google account accesses its own Drive and its own Gym Log data.
+
+---
+
+## 📊 Google Sheet Structure
+
+The app creates a spreadsheet named:
+
+```text
+Gym Log Data
+```
+
+It contains an `Overview` tab, and every workout day gets its own date tab.
+
+Example:
+
+```text
+Gym Log Data
+
+├── Overview
+├── 6 Aug 2026
+├── 7 Aug 2026
+├── 8 Aug 2026
+└── ...
+```
+
+Each daily tab contains a simple workout table:
+
+| Exercise | Sets | Reps | Weight (KG) | Muscle |
+|----------|------|------|-------------|--------|
+| Cable Rows | 3 | 12+12+10 | 60+55+55 | Back |
+| Lat Pulldown | 3 | 10+10+8 | 65+65+70 | Back |
+| Bicep Curl | 3 | 12+10+8 | 12+14+14 | Biceps |
+
+Reps and weights correspond set-for-set.
+
+Example:
+
+```text
+Reps:
+12 + 12 + 10
+
+Weight:
+60 + 55 + 55
+```
+
+means:
+
+```text
+Set 1 → 12 reps × 60 kg
+Set 2 → 12 reps × 55 kg
+Set 3 → 10 reps × 55 kg
+```
+
+Workout duration is stored separately in the day's Sheet tab so that it can also be restored on another device.
+
+---
+
+## 🔄 Duplicate-Safe Sync
+
+Gym Log is designed so that repeatedly pressing Sync does not keep appending the same workout again and again.
+
+The sync behavior is intended to be idempotent:
+
+```text
+Workout created
+      |
+      v
+Saved locally
+      |
+      v
+Synced to Google Sheet
+      |
+      v
+Already stored
+```
+
+When a workout is edited, its Sheet representation can be safely replaced rather than blindly appended.
+
+The app also tracks workout IDs that were merged into a same-day history record so old IDs do not get resurrected repeatedly during restore.
+
+---
+
+## ♻️ Restore From Google Sheets
+
+Google Sheets also acts as a backup.
+
+If local browser data is lost, sign in with the same Google account and restore your workout history from its `Gym Log Data` spreadsheet.
+
+```text
+Google Sheet
+     |
+     v
+Restore
+     |
+     v
+Local Gym Log history
+```
+
+Restore is designed to avoid adding the same workout repeatedly if it already exists locally.
+
+---
+
+## 🔐 Google OAuth
+
+Gym Log uses Google OAuth for Google Drive and Google Sheets access.
+
+The app does not receive your Google password.
+
+Authentication is handled by Google, and the browser uses the resulting OAuth access token to communicate directly with Google APIs.
+
+The project is designed around limited access to:
+
+- Files created by the application
+- Google Sheets data used by Gym Log
+- Basic signed-in account identification
+
+Do not place an OAuth **Client Secret** inside the frontend.
+
+A browser OAuth **Client ID** is expected to be public.
+
+---
+
+## 🛡 Privacy Architecture
+
+Gym Log intentionally has no central application backend.
+
+```text
+You
+ |
+ |---- Local browser storage
+ |
+ `---- Google APIs
           |
-          `-- "Gym Log Data" spreadsheet, created in *your* Drive
+          `---- Your Google Drive
 ```
 
-There is no backend server. Your browser talks straight to Google's API using
-a Google Sign-In popup. Only you (or whoever signs in on a given phone) can
-see or write to their own sheet — one Google account, one private spreadsheet.
+Workout data stays either:
 
-### The spreadsheet layout
+1. On your device
+2. In your own Google Drive
 
-The first time you sign in, the app creates **"Gym Log Data"** in your Drive
-with one **Overview** tab. From then on, every day you log a workout gets its
-own tab, named by date — e.g. **"8 Aug 2026"**. Open that tab and you'll see
-a plain table, one row per exercise:
-
-| Exercise    | Sets | Reps     | Weight (KG) | Muscle |
-|-------------|------|----------|-------------|--------|
-| Cable Rows  | 3    | 12+12+10 | 60+55+55    | Back   |
-
-- **Sets** is how many sets you did for that exercise.
-- **Reps** and **Weight** list every set's value, in order, joined with `+` —
-  so `12+12+10` means set 1 was 12 reps, set 2 was 12, set 3 was 10, and the
-  weight column lines up the same way set-for-set.
-- **Muscle** is whichever of Chest / Back / Biceps / Triceps / Shoulders /
-  Legs / Abs you picked for that exercise in the app (blank if you didn't
-  set one). Tabs created before this existed get the column added
-  automatically the next time you sync a workout into them.
-
-No volume, no workout IDs — just the plain log. Off to the side, columns
-**F1/F2** hold the day's total workout duration (e.g. `Duration` / `00:35:12`)
-— separate from the exercise table so it never collides with it. This is the
-one thing besides exercises that does get written to the Sheet: it's how the
-"time to complete the workout" figure survives a Restore on a new device.
-
-The app keeps **one history record per calendar day**. If you save a workout,
-then later save more exercises the same day (or tap "Save Time" on the
-stopwatch independently of saving any exercises), they all fold into that
-same day's single record rather than piling up as separate entries — both on
-your phone and, the next time it syncs, in the Sheet too. If two different
-devices happen to sync the same day separately, the Sheet keeps both blocks
-apart with a small `— 7:32 PM —` marker row so nothing blends together.
-
-Because each day is its own tab, you can jump straight to any date from the
-tab bar at the bottom of Google Sheets, or use **Data > Create a filter** /
-right-click a tab > **Copy to** if you want to build your own combined view
-or chart across days later.
+There is no central Gym Log database collecting every user's workout history.
 
 ---
 
-## One-time setup: Google Client ID (free, ~5 minutes)
+# ⚙️ Self-Hosting Setup
 
-The app needs a **Google OAuth Client ID** so Google knows which app is
-asking to write to your Sheet. This is free forever for personal use and
-does not require publishing or verifying anything.
+## 1. Create a Google Cloud Project
 
-1. Go to [console.cloud.google.com](https://console.cloud.google.com/) and
-   sign in with your Google account.
-2. Create a new project (top-left project picker → **New Project**). Name it
-   anything, e.g. "Gym Log".
-3. Go to **APIs & Services → Library**, search for and **Enable**:
-   - Google Sheets API
-   - Google Drive API
-4. Go to **APIs & Services →   screen**.
-   - User Type: **External**.
-   - Fill in an app name ("Gym Log"), your email as support/contact email.
-   - Scopes: you can skip adding any here (the app requests them at sign-in).
-   - Under **Test users**, add your own Gmail address (and anyone else's who
-     will use the app). While the app stays in "Testing" mode this is free
-     and needs no Google review — you'll just see an "unverified app"
-     warning on first sign-in, which is expected; click **Advanced → Go to
-     Gym Log (unsafe)** to continue. It's safe because it's *your own app*.
-5. Go to **APIs & Services → Credentials → + Create Credentials → OAuth
-   client ID**.
-   - Application type: **Web application**.
-   - Name: "Gym Log Web".
-   - Under **Authorized JavaScript origins**, add the exact URL you'll host
-     the app at (see hosting options below), e.g.
-     `https://yourname.github.io` or `http://localhost:8080`. You can add
-     multiple origins.
-   - Click **Create**. Copy the **Client ID** (ends in
-     `.apps.googleusercontent.com`).
-6. Paste that Client ID into the app's **Settings (⚙) → Google Client ID**
-   field and tap **Save Client ID**, then **Sign in with Google**.
+Open:
 
-The Client ID is not a secret (it's meant to be public/embedded in
-front-end apps like this one) — it's safe to leave saved in the app.
+https://console.cloud.google.com/
 
-**Note:** each *user* of the app just signs in with their own Google
-account and gets their own private "Gym Log Data" spreadsheet — you only do
-the Client ID setup once, as the person hosting the app.
+Create a project such as:
+
+```text
+Gym Log
+```
 
 ---
 
-## Hosting it (needed for install + sign-in to work)
+## 2. Enable Google APIs
 
-Google Sign-In requires the page to be served over **HTTPS** (or
-`http://localhost` for local testing) — it won't work from a plain `file://`
-double-click or a bare LAN IP address. Two free options:
+Go to:
 
-### Option A — GitHub Pages (recommended, permanent, free)
+```text
+APIs & Services
+→ Library
+```
+
+Enable:
+
+```text
+Google Sheets API
+Google Drive API
+```
+
+---
+
+## 3. Configure Google Auth
+
+Open:
+
+```text
+Google Auth Platform
+```
+
+For testing/personal use:
+
+```text
+Audience: External
+Publishing status: Testing
+```
+
+Add the Google accounts that are allowed to use the app under:
+
+```text
+Audience
+→ Test users
+```
+
+Example:
+
+```text
+youraccount@gmail.com
+friend@gmail.com
+anotheraccount@gmail.com
+```
+
+Multiple test users can use the same OAuth Client ID.
+
+---
+
+## 4. Create an OAuth Client
+
+Go to:
+
+```text
+Google Auth Platform
+→ Clients
+→ Create Client
+```
+
+Choose:
+
+```text
+Application type:
+Web application
+```
+
+---
+
+## 5. Configure the Authorized JavaScript Origin
+
+For GitHub Pages:
+
+```text
+https://YOUR_USERNAME.github.io
+```
+
+Example:
+
+```text
+https://mujahidnadeem6852443.github.io
+```
+
+Do not include the repository path in the JavaScript origin.
+
+✅ Correct:
+
+```text
+https://mujahidnadeem6852443.github.io
+```
+
+❌ Incorrect:
+
+```text
+https://mujahidnadeem6852443.github.io/gym-log/
+```
+
+The app itself can still live at:
+
+```text
+https://mujahidnadeem6852443.github.io/gym-log/
+```
+
+---
+
+## 6. Copy the OAuth Client ID
+
+Google will generate a Client ID similar to:
+
+```text
+1234567890-xxxxxxxxxxxxxxxx.apps.googleusercontent.com
+```
+
+Use that Client ID in the app configuration.
+
+The Client ID is not a password or secret.
+
+Never expose the OAuth Client Secret in your HTML or JavaScript.
+
+---
+
+# 🚀 Deploy With GitHub Pages
 
 ```bash
-cd gym-log-app
 git init
 git add .
-git commit -m "Gym Log"
+git commit -m "Initial Gym Log"
 git branch -M main
-git remote add origin https://github.com/<you>/gym-log.git
+git remote add origin https://github.com/YOUR_USERNAME/gym-log.git
 git push -u origin main
 ```
 
-Then in the GitHub repo: **Settings → Pages → Deploy from branch → main →
-/(root)**. Your app will be live at `https://<you>.github.io/gym-log/`.
-Use that exact URL as the "Authorized JavaScript origin" in step 5 above
-(scheme + host only, e.g. `https://<you>.github.io`).
+Then open:
 
-### Option B — Local network, for testing on your own Wi-Fi
+```text
+Repository
+→ Settings
+→ Pages
+```
+
+Choose:
+
+```text
+Deploy from branch
+```
+
+Then:
+
+```text
+main
+/root
+```
+
+Your app will be published at:
+
+```text
+https://YOUR_USERNAME.github.io/gym-log/
+```
+
+---
+
+# 🧪 Local Development
+
+Do not rely on opening the HTML directly with `file://` if you want Google OAuth to work.
+
+Serve the app locally:
 
 ```bash
-cd gym-log-app
 python3 -m http.server 8080
 ```
 
-Visit `http://localhost:8080` on the same Mac to test sign-in (add
-`http://localhost:8080` as an authorized origin). This won't work from your
-phone unless your phone can reach `localhost` on your Mac — for a phone you
-need Option A (or Netlify/Vercel free static hosting, same idea).
+Then open:
+
+```text
+http://localhost:8080
+```
+
+For local Google OAuth testing, also add:
+
+```text
+http://localhost:8080
+```
+
+to your OAuth client's Authorized JavaScript Origins.
 
 ---
 
-## Installing on your phone (no App Store / Play Store)
+# 📱 Install as an App
 
-Once hosted at a URL (Option A above):
+Gym Log can be installed as a PWA.
 
-**iPhone (Safari):**
-1. Open the URL in Safari (must be Safari, not Chrome, for install to work).
-2. Tap the **Share** icon (square with an arrow) → **Add to Home Screen**.
-3. Tap **Add**. It now opens full-screen like a native app, works offline for
-   the interface, and syncs to Sheets when online.
+## iPhone
 
-**Android (Chrome):**
-1. Open the URL in Chrome.
-2. Tap the **⋮** menu → **Install app** (or you may see an automatic
-   "Add Gym Log to Home screen" banner).
-3. Confirm. It installs like a native app icon.
+Open Gym Log in Safari:
 
-Both are completely free — this is a **PWA (Progressive Web App)**, not an
-App Store / Play Store listing, so there's no developer fee, no review
-process, no cost.
+```text
+Share
+→ Add to Home Screen
+→ Add
+```
 
----
+## Android
 
-## If your phone shows a "Deceptive site" / Safe Browsing warning
+Open Gym Log in Chrome:
 
-Chrome (and Safari, which uses the same Google Safe Browsing list) may show a
-red "Deceptive site ahead" page the first time you open a brand-new
-`github.io` URL, especially one with a Google sign-in button on it — this is
-Google's automated phishing classifier being cautious about a new,
-zero-reputation domain that also asks to connect a Google account. It's a
-false positive, not a sign anything is wrong with your code, but only Google
-can actually clear it — no code change flips it off. Here's the real fix:
+```text
+⋮
+→ Install app
+```
 
-1. **Check the current status.** Go to
-   [Google Safe Browsing Transparency Report](https://transparencyreport.google.com/safe-browsing/search)
-   and paste in your site's URL (e.g. `https://<you>.github.io/gym-log/`).
-   It'll tell you whether it's currently flagged and by which list.
-2. **Verify the site in Google Search Console** (free):
-   - Go to [search.google.com/search-console](https://search.google.com/search-console).
-   - Add your `https://<you>.github.io` URL as a property.
-   - Verify ownership using the **HTML tag** method: it gives you a
-     `<meta name="google-site-verification" ...>` tag — add that inside
-     `<head>` in `index.html`, commit, push, then click Verify.
-3. Once verified, open **Security Issues** in the left sidebar. If Google
-   has flagged the site, details will appear here (usually within a few
-   hours, sometimes up to ~72 hours after the flag).
-4. After confirming there's nothing genuinely malicious (there isn't), click
-   **Request a Review** and briefly describe the app (a personal workout
-   logger using Google's own OAuth to write to the user's own Sheet).
-   Reviews are typically resolved within a few hours to a couple of days.
-5. You can also submit a direct false-positive report without Search
-   Console, which is faster to submit but has no status tracking:
-   [safebrowsing.google.com/safebrowsing/report_error](https://safebrowsing.google.com/safebrowsing/report_error/).
+or:
 
-**While you wait**, to keep testing on your own phone: on the warning
-screen, tap **Details** (or **Show Details**) — there's a small link at the
-bottom (wording varies: "visit this unsafe site" / "continue to site") that
-lets you proceed anyway. Only ever do this for your own site whose code you
-can see — never for a warning on someone else's link.
-
-If it's still flagged after a couple of days with no explanation in Search
-Console, try hosting the exact same files on a second free static host
-(Cloudflare Pages or Netlify both work identically to GitHub Pages) — if the
-warning does *not* appear there, that confirms it was specific to that
-`github.io` hostname's reputation rather than the app's content, and you can
-just keep using the other host.
+```text
+Add to Home screen
+```
 
 ---
 
-## Security notes
+# 🧱 Technology Stack
 
-- **Minimal scope**: the app only requests `drive.file` (it can only see/edit
-  files *it* created — not your entire Drive) and `userinfo.email` (to show
-  who's signed in and to keep each Google account's spreadsheet separate on
-  a shared device). It never requests broad Drive or Gmail access.
-- **Google-branded sign-in button**: the sign-in button uses Google's
-  official "G" logo and brand styling rather than a generic custom button,
-  and the technical "Client ID" field is tucked into a collapsed "First-time
-  setup" section rather than sitting next to the sign-in action — this keeps
-  the page from visually resembling the fake "connect your Google account"
-  pages used by real consent-phishing kits.
-- **No server, no stored secrets**: your Google access token lives only in
-  memory in the browser tab and is never written to disk/localStorage. It
-  expires automatically (~1 hour) and is silently renewed only while you're
-  signed in and using the app.
-- **Content-Security-Policy** is set in `index.html` to restrict which
-  domains the page can load scripts from or send data to (only Google's
-  sign-in and API domains) — this limits damage if any injected script
-  somehow ended up on the page.
-- **Your data, your account**: nothing passes through any third-party
-  server. Traffic goes straight from your browser to `googleapis.com`.
-- Deleting a workout in the app only removes it locally — it intentionally
-  does **not** delete the corresponding rows from your Google Sheet, so your
-  Sheet is safe from accidental taps. Delete rows in Sheets directly if you
-  want them gone there too.
+Gym Log intentionally uses a small stack:
+
+```text
+HTML
+CSS
+Vanilla JavaScript
+Browser localStorage
+Google OAuth
+Google Drive API
+Google Sheets API
+GitHub Pages
+PWA
+```
+
+There is currently:
+
+```text
+No Node.js backend
+No Express server
+No PostgreSQL
+No Firebase database
+No AWS infrastructure
+No monthly hosting bill
+```
 
 ---
 
-## What's deliberately not built yet
+# 🏗 Architecture
 
-To keep this fast and simple, later ideas (exercise autocomplete, "last time
-you did this" comparisons, personal records, rest timers, training
-templates) are intentionally left for a future version — see
-`Context.txt` in the original project notes for the full roadmap. The
-current focus is: **reliable logging, your own Google Sheet as the real
-database, and a phone-installable app — for free.**
+```text
+                   ┌────────────────────┐
+                   │     Gym Log PWA    │
+                   │   HTML / CSS / JS  │
+                   └─────────┬──────────┘
+                             │
+             ┌───────────────┴───────────────┐
+             │                               │
+             ▼                               ▼
+       localStorage                    Google OAuth
+             │                               │
+             │                         Access Token
+             │                               │
+             │                     ┌─────────┴─────────┐
+             │                     ▼                   ▼
+             │               Google Drive       Google Sheets
+             │                    API                API
+             │                     │                   │
+             └─────────────────────┴─────────┬─────────┘
+                                             │
+                                             ▼
+                                      Gym Log Data
+                                        Spreadsheet
+```
+
+---
+
+# 🎯 Design Goal
+
+Gym Log focuses on one core idea:
+
+> Make logging a workout fast enough that the tracker never gets in the way of the workout.
+
+The current focus is:
+
+- Fast exercise entry
+- Reliable local storage
+- One history record per day
+- Workout calendar
+- Muscle-group indicators
+- Session duration
+- Independent Save Time
+- Google Sheets backup
+- Restore capability
+- Duplicate-safe synchronization
+- Mobile installation
+
+---
+
+# 🔮 Future Ideas
+
+Possible future improvements include:
+
+- Exercise autocomplete
+- Exercise library
+- Previous workout comparison
+- "Last time" values
+- Personal records
+- Estimated 1RM
+- Training volume analytics
+- Exercise progression charts
+- Rest timer
+- Workout templates
+- Push / Pull / Legs templates
+- RPE / RIR
+- Body-weight tracking
+- Workout notes
+- Progressive overload recommendations
+
+The goal is to add these features without sacrificing the simplicity and speed of the current app.
+
+---
+
+# 💰 Cost
+
+Gym Log can run using free services:
+
+- GitHub Pages
+- Google OAuth
+- Google Sheets
+- Google Drive
+- Browser localStorage
+
+For normal personal use, no dedicated server is required.
+
+---
+
+# 👨‍💻 Author
+
+**Mohammad Mujahid Nadeem**
+
+Built as a personal strength-training tracker focused on simplicity, privacy, offline usability, and user-owned data.
+
+---
+
+## ⭐ Why Gym Log?
+
+Most workout trackers require an account, backend database, subscription, or large mobile application.
+
+Gym Log takes a simpler approach:
+
+```text
+Open it.
+Log your workout.
+Keep your data.
+```
+
+Use it locally with no account, or connect Google and keep a private backup in your own Drive.
