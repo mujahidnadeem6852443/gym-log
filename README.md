@@ -157,12 +157,64 @@ process, no cost.
 
 ---
 
+## If your phone shows a "Deceptive site" / Safe Browsing warning
+
+Chrome (and Safari, which uses the same Google Safe Browsing list) may show a
+red "Deceptive site ahead" page the first time you open a brand-new
+`github.io` URL, especially one with a Google sign-in button on it — this is
+Google's automated phishing classifier being cautious about a new,
+zero-reputation domain that also asks to connect a Google account. It's a
+false positive, not a sign anything is wrong with your code, but only Google
+can actually clear it — no code change flips it off. Here's the real fix:
+
+1. **Check the current status.** Go to
+   [Google Safe Browsing Transparency Report](https://transparencyreport.google.com/safe-browsing/search)
+   and paste in your site's URL (e.g. `https://<you>.github.io/gym-log/`).
+   It'll tell you whether it's currently flagged and by which list.
+2. **Verify the site in Google Search Console** (free):
+   - Go to [search.google.com/search-console](https://search.google.com/search-console).
+   - Add your `https://<you>.github.io` URL as a property.
+   - Verify ownership using the **HTML tag** method: it gives you a
+     `<meta name="google-site-verification" ...>` tag — add that inside
+     `<head>` in `index.html`, commit, push, then click Verify.
+3. Once verified, open **Security Issues** in the left sidebar. If Google
+   has flagged the site, details will appear here (usually within a few
+   hours, sometimes up to ~72 hours after the flag).
+4. After confirming there's nothing genuinely malicious (there isn't), click
+   **Request a Review** and briefly describe the app (a personal workout
+   logger using Google's own OAuth to write to the user's own Sheet).
+   Reviews are typically resolved within a few hours to a couple of days.
+5. You can also submit a direct false-positive report without Search
+   Console, which is faster to submit but has no status tracking:
+   [safebrowsing.google.com/safebrowsing/report_error](https://safebrowsing.google.com/safebrowsing/report_error/).
+
+**While you wait**, to keep testing on your own phone: on the warning
+screen, tap **Details** (or **Show Details**) — there's a small link at the
+bottom (wording varies: "visit this unsafe site" / "continue to site") that
+lets you proceed anyway. Only ever do this for your own site whose code you
+can see — never for a warning on someone else's link.
+
+If it's still flagged after a couple of days with no explanation in Search
+Console, try hosting the exact same files on a second free static host
+(Cloudflare Pages or Netlify both work identically to GitHub Pages) — if the
+warning does *not* appear there, that confirms it was specific to that
+`github.io` hostname's reputation rather than the app's content, and you can
+just keep using the other host.
+
+---
+
 ## Security notes
 
 - **Minimal scope**: the app only requests `drive.file` (it can only see/edit
   files *it* created — not your entire Drive) and `userinfo.email` (to show
   who's signed in and to keep each Google account's spreadsheet separate on
   a shared device). It never requests broad Drive or Gmail access.
+- **Google-branded sign-in button**: the sign-in button uses Google's
+  official "G" logo and brand styling rather than a generic custom button,
+  and the technical "Client ID" field is tucked into a collapsed "First-time
+  setup" section rather than sitting next to the sign-in action — this keeps
+  the page from visually resembling the fake "connect your Google account"
+  pages used by real consent-phishing kits.
 - **No server, no stored secrets**: your Google access token lives only in
   memory in the browser tab and is never written to disk/localStorage. It
   expires automatically (~1 hour) and is silently renewed only while you're
