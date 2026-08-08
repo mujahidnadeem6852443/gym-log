@@ -23,7 +23,17 @@ function loadTimer(){ try{ const r=localStorage.getItem(K_TIMER); if(r) return J
 function saveTimer(){ localStorage.setItem(K_TIMER, JSON.stringify(timer)); }
 function loadPendingDeletes(){ try{ const r=localStorage.getItem(K_PENDING_DELETES); if(r) return JSON.parse(r); }catch(e){} return []; }
 function savePendingDeletes(list){ localStorage.setItem(K_PENDING_DELETES, JSON.stringify(list)); }
-function loadExerciseDict(){ try{ const r=localStorage.getItem(K_EXERCISE_DICT); if(r) return JSON.parse(r); }catch(e){} return []; }
+function loadExerciseDict(){
+  try{
+    const r = localStorage.getItem(K_EXERCISE_DICT);
+    if(r){
+      const parsed = JSON.parse(r);
+      // Migrate the old plain-string-array format to {name, muscle}.
+      return parsed.map(item => typeof item === 'string' ? { name: item, muscle: '' } : item);
+    }
+  }catch(e){}
+  return [];
+}
 function saveExerciseDict(list){ localStorage.setItem(K_EXERCISE_DICT, JSON.stringify(list)); }
 function uid(){ return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2,10)); }
 function getWeightUnit(){ return localStorage.getItem(K_WEIGHT_UNIT) || 'kg'; }
@@ -69,20 +79,33 @@ setInterval(() => { if(timer.running) renderTimer(); }, 1000);
 renderTimer();
 
 // ---------- Exercise dictionary ----------
-// A standalone, persistent list of exercise names — separate from history,
-// so a name is remembered (and shows up in autocomplete) the moment you
+// A standalone, persistent list of {name, muscle} — separate from history,
+// so a name (and its muscle group, once set) is remembered the moment you
 // type it, not only after the whole workout gets saved. Most-recently-used
 // name sits at the front; matching is case-insensitive so "Bench Press" and
 // "bench press" collapse into one remembered entry (keeping whichever
 // casing you used last).
-function rememberExerciseName(name){
+const MUSCLE_GROUPS = ['Chest', 'Back', 'Biceps', 'Triceps', 'Shoulders', 'Legs', 'Abs'];
+
+// rememberExercise(name, muscle) — muscle is optional; when omitted, any
+// muscle group already remembered for this name is kept as-is rather than
+// being cleared.
+function rememberExercise(name, muscle){
   const trimmed = sanitizeText(name).trim();
   if(!trimmed) return;
   const key = trimmed.toLowerCase();
-  exerciseDict = exerciseDict.filter(n => n.toLowerCase() !== key);
-  exerciseDict.unshift(trimmed);
+  const existing = exerciseDict.find(e => e.name.toLowerCase() === key);
+  const finalMuscle = (muscle !== undefined && muscle !== '') ? muscle : (existing ? existing.muscle : '');
+  exerciseDict = exerciseDict.filter(e => e.name.toLowerCase() !== key);
+  exerciseDict.unshift({ name: trimmed, muscle: finalMuscle });
   if(exerciseDict.length > 300) exerciseDict.length = 300;
   saveExerciseDict(exerciseDict);
+}
+
+function getMuscleForExercise(name){
+  const key = name.trim().toLowerCase();
+  const found = exerciseDict.find(e => e.name.toLowerCase() === key);
+  return found ? found.muscle : '';
 }
 
 // Dictionary entries first (most-recent-first), then anything already in
@@ -92,9 +115,9 @@ function rememberExerciseName(name){
 function getExerciseSuggestions(){
   const seen = new Map();
   let order = 0;
-  exerciseDict.forEach(name => {
-    const key = name.toLowerCase();
-    if(!seen.has(key)) seen.set(key, { name, order: order++ });
+  exerciseDict.forEach(e => {
+    const key = e.name.toLowerCase();
+    if(!seen.has(key)) seen.set(key, { name: e.name, order: order++ });
   });
   history.forEach(entry => {
     entry.exercises.forEach(ex => {
@@ -162,13 +185,29 @@ function attachExerciseAutocomplete(input, onSelect){
   input.addEventListener('blur', () => list.classList.remove('open'));
 }
 
+function createMuscleSelect(currentValue, onChange){
+  const select = document.createElement('select');
+  select.className = 'exercise-muscle';
+  const blankOpt = document.createElement('option');
+  blankOpt.value = ''; blankOpt.textContent = 'Muscle group';
+  select.appendChild(blankOpt);
+  MUSCLE_GROUPS.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m; opt.textContent = m;
+    select.appendChild(opt);
+  });
+  select.value = currentValue || '';
+  select.addEventListener('change', e => onChange(e.target.value));
+  return select;
+}
+
 // ---------- Workout logging ----------
 const exerciseList = document.getElementById('exerciseList');
 const addExerciseBtn = document.getElementById('addExerciseBtn');
 const saveWorkoutBtn = document.getElementById('saveWorkoutBtn');
 
 function addExercise(focus){
-  const ex = { id: uid(), name:'', sets:[{reps:'', weight:''}] };
+  const ex = { id: uid(), name:'', muscle:'', sets:[{reps:'', weight:''}] };
   current.exercises.push(ex);
   saveCurrent();
   renderExercises(focus ? ex.id : null);
@@ -211,6 +250,12 @@ function renderExercises(focusId){
     head.appendChild(nameInput); head.appendChild(removeBtn);
     card.appendChild(head);
 
+    const muscleSelect = createMuscleSelect(ex.muscle, (value) => {
+      ex.muscle = value; saveCurrent();
+      rememberExercise(ex.name, value);
+    });
+    card.appendChild(muscleSelect);
+
     const lastPerfEl = document.createElement('div');
     lastPerfEl.className = 'last-performance';
     function updateLastPerf(){
@@ -226,8 +271,20 @@ function renderExercises(focusId){
     card.appendChild(lastPerfEl);
 
     nameInput.addEventListener('input', e => { ex.name = e.target.value; saveCurrent(); updateLastPerf(); });
-    nameInput.addEventListener('blur', () => rememberExerciseName(ex.name));
-    attachExerciseAutocomplete(nameInput, (name) => { ex.name = name; saveCurrent(); updateLastPerf(); rememberExerciseName(name); });
+    nameInput.addEventListener('blur', () => {
+      rememberExercise(ex.name, ex.muscle);
+      if(!ex.muscle){
+        const known = getMuscleForExercise(ex.name);
+        if(known){ ex.muscle = known; muscleSelect.value = known; saveCurrent(); }
+      }
+    });
+    attachExerciseAutocomplete(nameInput, (name) => {
+      ex.name = name; saveCurrent(); updateLastPerf();
+      const known = getMuscleForExercise(name);
+      if(known){ ex.muscle = known; muscleSelect.value = known; }
+      rememberExercise(name, ex.muscle);
+      saveCurrent();
+    });
 
     ex.sets.forEach((set, idx) => {
       const row = document.createElement('div');
@@ -274,6 +331,7 @@ saveWorkoutBtn.addEventListener('click', () => {
   const cleanExercises = current.exercises
     .map(ex => ({
       name: sanitizeText(ex.name || 'Unnamed exercise').trim() || 'Unnamed exercise',
+      muscle: ex.muscle || '',
       sets: ex.sets
         .filter(s => s.reps !== '' || s.weight !== '')
         .map(s => ({
@@ -285,7 +343,7 @@ saveWorkoutBtn.addEventListener('click', () => {
 
   if(cleanExercises.length === 0){ alert('Log at least one set before saving.'); return; }
 
-  cleanExercises.forEach(ex => rememberExerciseName(ex.name));
+  cleanExercises.forEach(ex => rememberExercise(ex.name, ex.muscle));
 
   const entry = {
     id: uid(),
@@ -434,14 +492,32 @@ function renderEditForm(container, entry){
       head.className = 'exercise-head';
       const nameInput = document.createElement('input');
       nameInput.className = 'exercise-name'; nameInput.placeholder = 'Exercise name'; nameInput.value = ex.name;
-      nameInput.addEventListener('input', e => { ex.name = e.target.value; });
-      nameInput.addEventListener('blur', () => rememberExerciseName(ex.name));
-      attachExerciseAutocomplete(nameInput, (name) => { ex.name = name; rememberExerciseName(name); });
       const rmEx = document.createElement('button');
       rmEx.className = 'remove-exercise'; rmEx.textContent = '✕'; rmEx.setAttribute('aria-label', 'Remove exercise');
       rmEx.addEventListener('click', () => { draft.splice(exIdx, 1); renderDraftExercises(); });
       head.appendChild(nameInput); head.appendChild(rmEx);
       card.appendChild(head);
+
+      const muscleSelect = createMuscleSelect(ex.muscle, (value) => {
+        ex.muscle = value;
+        rememberExercise(ex.name, value);
+      });
+      card.appendChild(muscleSelect);
+
+      nameInput.addEventListener('input', e => { ex.name = e.target.value; });
+      nameInput.addEventListener('blur', () => {
+        rememberExercise(ex.name, ex.muscle);
+        if(!ex.muscle){
+          const known = getMuscleForExercise(ex.name);
+          if(known){ ex.muscle = known; muscleSelect.value = known; }
+        }
+      });
+      attachExerciseAutocomplete(nameInput, (name) => {
+        ex.name = name;
+        const known = getMuscleForExercise(name);
+        if(known){ ex.muscle = known; muscleSelect.value = known; }
+        rememberExercise(name, ex.muscle);
+      });
 
       ex.sets.forEach((set, idx) => {
         const row = document.createElement('div');
@@ -485,7 +561,7 @@ function renderEditForm(container, entry){
 
   const addExBtn = document.createElement('button');
   addExBtn.className = 'add-exercise-btn'; addExBtn.textContent = '+ Add Exercise';
-  addExBtn.addEventListener('click', () => { draft.push({ id: uid(), name:'', sets:[{reps:'', weight:''}] }); renderDraftExercises(); });
+  addExBtn.addEventListener('click', () => { draft.push({ id: uid(), name:'', muscle:'', sets:[{reps:'', weight:''}] }); renderDraftExercises(); });
   wrap.appendChild(addExBtn);
 
   const actionsRow = document.createElement('div');
@@ -497,6 +573,7 @@ function renderEditForm(container, entry){
     const cleaned = draft
       .map(ex => ({
         name: sanitizeText(ex.name || 'Unnamed exercise').trim() || 'Unnamed exercise',
+        muscle: ex.muscle || '',
         sets: ex.sets.filter(s => s.reps !== '' || s.weight !== '').map(s => ({
           reps: s.reps === '' ? '' : Number(s.reps),
           weight: s.weight === '' ? '' : Number(s.weight)
@@ -520,7 +597,7 @@ function renderEditForm(container, entry){
 
 async function saveEditedEntry(entry, newExercises){
   entry.exercises = newExercises;
-  newExercises.forEach(ex => rememberExerciseName(ex.name));
+  newExercises.forEach(ex => rememberExercise(ex.name, ex.muscle));
   if(entry.synced && userEmail){
     try{
       const token = await getValidToken();
@@ -1254,7 +1331,7 @@ async function restoreFromSheet(){
   if(restored.length){
     history = history.concat(restored).sort((a, b) => new Date(b.date) - new Date(a.date));
     saveHistory();
-    restored.forEach(entry => entry.exercises.forEach(ex => rememberExerciseName(ex.name)));
+    restored.forEach(entry => entry.exercises.forEach(ex => rememberExercise(ex.name)));
     renderHistory();
     renderCalendar();
   }

@@ -201,6 +201,17 @@
   }
   .last-performance b{color:var(--blue); font-weight:700;}
 
+  .exercise-muscle{
+    -webkit-appearance:none; appearance:none;
+    background:var(--panel-2); border:1px solid var(--line); border-radius:8px;
+    color:var(--muted); font-family:var(--sans); font-size:12px; font-weight:700;
+    text-transform:uppercase; letter-spacing:0.5px;
+    padding:7px 26px 7px 10px; margin:0 0 10px 2px; outline:none;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath fill='%238b9199' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:right 10px center; background-size:9px 6px;
+  }
+  .exercise-muscle:focus{border-color:var(--blue);}
+
   .set-row{display:grid; grid-template-columns:22px 1fr 1fr 30px; gap:8px; align-items:center; margin-bottom:8px;}
   .set-num{font-family:var(--mono); color:var(--muted); font-size:13px; text-align:center;}
   .set-field{display:flex; flex-direction:column;}
