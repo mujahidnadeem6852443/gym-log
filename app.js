@@ -268,6 +268,8 @@ const dayDetail = document.getElementById('dayDetail');
 const dayDetailTitle = document.getElementById('dayDetailTitle');
 const dayDetailBody = document.getElementById('dayDetailBody');
 const dayDetailClose = document.getElementById('dayDetailClose');
+const dayDetailPrev = document.getElementById('dayDetailPrev');
+const dayDetailNext = document.getElementById('dayDetailNext');
 
 const today = new Date();
 let calView = { year: today.getFullYear(), month: today.getMonth() }; // month 0-indexed
@@ -323,36 +325,60 @@ function renderCalendar(){
       + (!entries && isPastOrToday ? ' rest-day' : '')
       + (key === todayKey ? ' today' : '');
     el.innerHTML = `<span>${day}</span>` + (entries ? '<span class="cal-dot"></span>' : (isPastOrToday ? '<span class="cal-dot-rest"></span>' : ''));
-    if(entries){
-      el.addEventListener('click', () => showDayDetail(key, entries));
-    }
+    el.addEventListener('click', () => showDayDetail(key));
     calGrid.appendChild(el);
   }
 }
 
-function showDayDetail(key, entries){
+let currentDetailKey = null;
+
+function showDayDetail(key){
+  currentDetailKey = key;
   const [y,m,d] = key.split('-').map(Number);
   const label = new Date(y, m-1, d).toLocaleDateString(undefined, {weekday:'long', month:'long', day:'numeric'});
   dayDetailTitle.textContent = label;
   dayDetailBody.innerHTML = '';
-  entries.forEach(entry => {
-    entry.exercises.forEach(ex => {
-      const block = document.createElement('div');
-      block.className = 'dd-exercise';
-      const title = document.createElement('div');
-      title.className = 'dd-exercise-name'; title.textContent = ex.name;
-      block.appendChild(title);
-      ex.sets.forEach((s,i) => {
-        const line = document.createElement('div');
-        line.className = 'dd-set-line';
-        line.textContent = `Set ${i+1}:  ${s.reps === '' ? '-' : s.reps} reps  ×  ${s.weight === '' ? '-' : s.weight}`;
-        block.appendChild(line);
+
+  const entries = entriesByDay()[key];
+  if(!entries || entries.length === 0){
+    const note = document.createElement('div');
+    note.className = 'dd-rest-note';
+    note.textContent = 'Rest day — no workout logged.';
+    dayDetailBody.appendChild(note);
+  } else {
+    entries.forEach(entry => {
+      entry.exercises.forEach(ex => {
+        const block = document.createElement('div');
+        block.className = 'dd-exercise';
+        const title = document.createElement('div');
+        title.className = 'dd-exercise-name'; title.textContent = ex.name;
+        block.appendChild(title);
+        ex.sets.forEach((s,i) => {
+          const line = document.createElement('div');
+          line.className = 'dd-set-line';
+          line.textContent = `Set ${i+1}:  ${s.reps === '' ? '-' : s.reps} reps  ×  ${s.weight === '' ? '-' : s.weight}`;
+          block.appendChild(line);
+        });
+        dayDetailBody.appendChild(block);
       });
-      dayDetailBody.appendChild(block);
     });
-  });
+  }
+
   dayDetail.classList.add('open');
 }
+
+function shiftDetailDay(delta){
+  if(!currentDetailKey) return;
+  const [y,m,d] = currentDetailKey.split('-').map(Number);
+  const next = new Date(y, m-1, d + delta);
+  if(next.getFullYear() !== calView.year || next.getMonth() !== calView.month){
+    calView = { year: next.getFullYear(), month: next.getMonth() };
+    renderCalendar();
+  }
+  showDayDetail(dateKey(next));
+}
+dayDetailPrev.addEventListener('click', () => shiftDetailDay(-1));
+dayDetailNext.addEventListener('click', () => shiftDetailDay(1));
 dayDetailClose.addEventListener('click', () => dayDetail.classList.remove('open'));
 
 calPrev.addEventListener('click', () => {
@@ -393,6 +419,7 @@ let tokenExpiry = 0;
 let userEmail = localStorage.getItem(K_LAST_EMAIL) || null;
 let userPicture = null;
 let spreadsheetId = null;
+let sheetMetaCache = null; // { [tabTitle]: sheetId } for the current spreadsheet
 
 function setSyncStatus(kind, text){
   syncStatus.className = 'sync-status' + (kind ? ' ' + kind : '');
@@ -478,7 +505,7 @@ signOutBtn.addEventListener('click', () => {
   if(accessToken && window.google && google.accounts && google.accounts.oauth2){
     google.accounts.oauth2.revoke(accessToken, () => {});
   }
-  accessToken = null; tokenExpiry = 0; userEmail = null; userPicture = null; spreadsheetId = null;
+  accessToken = null; tokenExpiry = 0; userEmail = null; userPicture = null; spreadsheetId = null; sheetMetaCache = null;
   localStorage.removeItem(K_LAST_EMAIL);
   updateAuthUI();
 });
@@ -529,7 +556,7 @@ async function ensureSpreadsheet(){
 
   if(id){
     const check = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}?fields=spreadsheetId`, { headers:{ Authorization:'Bearer '+token } });
-    if(check.ok){ spreadsheetId = id; return id; }
+    if(check.ok){ spreadsheetId = id; await loadSheetMeta(token); return id; }
     localStorage.removeItem(key);
   }
 
@@ -542,6 +569,7 @@ async function ensureSpreadsheet(){
     if(data.files && data.files.length){
       spreadsheetId = data.files[0].id;
       localStorage.setItem(key, spreadsheetId);
+      await loadSheetMeta(token);
       return spreadsheetId;
     }
   }
@@ -551,117 +579,122 @@ async function ensureSpreadsheet(){
   return spreadsheetId;
 }
 
+async function loadSheetMeta(token){
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties(sheetId,title)`, { headers:{ Authorization:'Bearer '+token } });
+  if(!res.ok) throw new Error('Failed to read spreadsheet (' + res.status + ')');
+  const data = await res.json();
+  sheetMetaCache = {};
+  data.sheets.forEach(s => { sheetMetaCache[s.properties.title] = s.properties.sheetId; });
+}
+
 async function createSpreadsheet(token){
   const createRes = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
     method:'POST',
     headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
     body: JSON.stringify({
       properties:{ title:'Gym Log Data' },
-      sheets:[
-        { properties:{ title:'Sessions', gridProperties:{ frozenRowCount:1 } } },
-        { properties:{ title:'Log', gridProperties:{ frozenRowCount:1 } } },
-        { properties:{ title:'Summary', gridProperties:{ frozenRowCount:1 } } }
-      ]
+      sheets:[ { properties:{ title:'Overview' } } ]
     })
   });
   if(!createRes.ok) throw new Error('Failed to create spreadsheet (' + createRes.status + ')');
   const created = await createRes.json();
   const id = created.spreadsheetId;
-  const sheetIdByTitle = {};
-  created.sheets.forEach(s => { sheetIdByTitle[s.properties.title] = s.properties.sheetId; });
 
-  const headerRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values:batchUpdate`, {
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values:batchUpdate`, {
     method:'POST',
     headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
     body: JSON.stringify({
       valueInputOption:'USER_ENTERED',
       data:[
-        { range:'Sessions!A1:J1', values:[['Date','Weekday','Month','Start Time','End Time','Duration','Exercises','Sets','Total Volume','Workout ID']] },
-        { range:'Log!A1:K1', values:[['Date','Weekday','Month','Time','Workout ID','Exercise','Set #','Reps','Weight','Unit','Set Volume']] },
-        { range:'Summary!A1', values:[['Monthly Totals (auto-updates as you sync workouts)']] },
-        { range:'Summary!A3', values:[["=QUERY(Log!A2:K,\"select C, sum(K), count(A) where C is not null group by C order by C desc label C 'Month', sum(K) 'Total Volume', count(A) 'Total Sets'\",0)"]] }
+        { range:'Overview!A1', values:[['Gym Log']] },
+        { range:'Overview!A2', values:[['Each workout day gets its own tab, named by its date (e.g. "8 Aug 2026"). Tabs appear as you log workouts.']] }
       ]
     })
   });
-  if(!headerRes.ok) throw new Error('Failed to write sheet headers (' + headerRes.status + ')');
 
-  const fmtRequests = ['Sessions','Log'].map(title => ({
-    repeatCell:{
-      range:{ sheetId: sheetIdByTitle[title], startRowIndex:0, endRowIndex:1 },
-      cell:{ userEnteredFormat:{ textFormat:{ bold:true } } },
-      fields:'userEnteredFormat.textFormat.bold'
-    }
-  }));
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}:batchUpdate`, {
-    method:'POST',
-    headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
-    body: JSON.stringify({ requests: fmtRequests })
-  });
+  sheetMetaCache = {};
+  created.sheets.forEach(s => { sheetMetaCache[s.properties.title] = s.properties.sheetId; });
 
   return id;
 }
 
-function dateParts(iso){
+const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function sheetTitleForDate(iso){
   const d = new Date(iso);
-  const y = d.getFullYear();
-  const m = String(d.getMonth()+1).padStart(2,'0');
-  const day = String(d.getDate()).padStart(2,'0');
-  return {
-    dateStr: `${y}-${m}-${day}`,
-    monthStr: `${y}-${m}`,
-    weekday: d.toLocaleDateString(undefined, { weekday:'short' }),
-    time: d.toLocaleTimeString(undefined, { hour:'2-digit', minute:'2-digit' })
-  };
+  return `${d.getDate()} ${MONTH_SHORT[d.getMonth()]} ${d.getFullYear()}`;
 }
 
-function logRowsForEntry(entry){
-  const { dateStr, monthStr, weekday, time } = dateParts(entry.date);
-  const unit = getWeightUnit();
-  const rows = [];
-  entry.exercises.forEach(ex => {
-    ex.sets.forEach((s, i) => {
-      const reps = s.reps === '' ? '' : Number(s.reps);
-      const weight = s.weight === '' ? '' : Number(s.weight);
-      const vol = (reps && weight) ? reps * weight : '';
-      rows.push([dateStr, weekday, monthStr, time, entry.id, ex.name, i+1, reps, weight, unit, vol]);
-    });
+function exerciseRowsForEntry(entry){
+  return entry.exercises.map(ex => {
+    const reps = ex.sets.map(s => s.reps === '' ? '-' : s.reps).join('+');
+    const weight = ex.sets.map(s => s.weight === '' ? '-' : s.weight).join('+');
+    return [ex.name, ex.sets.length, reps, weight];
   });
-  return rows;
 }
 
-function sessionRowForEntry(entry){
-  const { dateStr, monthStr, weekday } = dateParts(entry.date);
-  const endTime = new Date(entry.date);
-  const startTime = new Date(endTime.getTime() - (entry.durationMs || 0));
-  const setCount = entry.exercises.reduce((n,e) => n + e.sets.length, 0);
-  const totalVolume = entry.exercises.reduce((sum, ex) => sum + ex.sets.reduce((s2, st) => {
-    const r = Number(st.reps) || 0, w = Number(st.weight) || 0;
-    return s2 + r*w;
-  }, 0), 0);
-  return [
-    dateStr, weekday, monthStr,
-    startTime.toLocaleTimeString(undefined, { hour:'2-digit', minute:'2-digit' }),
-    endTime.toLocaleTimeString(undefined, { hour:'2-digit', minute:'2-digit' }),
-    fmt(entry.durationMs || 0),
-    entry.exercises.length, setCount, totalVolume, entry.id
-  ];
+async function ensureDateSheet(token, title){
+  if(sheetMetaCache && sheetMetaCache[title] != null) return sheetMetaCache[title];
+
+  const addRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+    method:'POST',
+    headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
+    body: JSON.stringify({ requests:[ { addSheet:{ properties:{ title, gridProperties:{ frozenRowCount:1 } } } } ] })
+  });
+  if(!addRes.ok) throw new Error('Failed to create tab "' + title + '" (' + addRes.status + ')');
+  const added = await addRes.json();
+  const sheetId = added.replies[0].addSheet.properties.sheetId;
+
+  const unit = getWeightUnit().toUpperCase();
+  const headerRange = `'${title}'!A1:D1`;
+  const headerRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(headerRange)}?valueInputOption=USER_ENTERED`,
+    { method:'PUT', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values:[['Exercise','Sets','Reps',`Weight (${unit})`]] }) }
+  );
+  if(!headerRes.ok) throw new Error('Failed to write header for "' + title + '" (' + headerRes.status + ')');
+
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+    method:'POST',
+    headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
+    body: JSON.stringify({ requests:[ {
+      repeatCell:{
+        range:{ sheetId, startRowIndex:0, endRowIndex:1 },
+        cell:{ userEnteredFormat:{ textFormat:{ bold:true } } },
+        fields:'userEnteredFormat.textFormat.bold'
+      }
+    } ] })
+  });
+
+  if(!sheetMetaCache) sheetMetaCache = {};
+  sheetMetaCache[title] = sheetId;
+  return sheetId;
 }
 
 async function syncEntry(token, entry){
-  const logRows = logRowsForEntry(entry);
-  const sessionRow = sessionRowForEntry(entry);
+  const title = sheetTitleForDate(entry.date);
+  await ensureDateSheet(token, title);
 
-  const r1 = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Log!A1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
-    { method:'POST', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values: logRows }) }
+  // If this tab already has rows from an earlier workout logged the same day,
+  // add a small time-stamped separator so the two sessions don't blend together.
+  const existingRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`'${title}'!A2:A`)}`,
+    { headers:{ Authorization:'Bearer '+token } }
   );
-  if(!r1.ok) throw new Error('Log append failed (' + r1.status + ')');
+  const existingData = existingRes.ok ? await existingRes.json() : null;
+  const hasPriorSession = !!(existingData && existingData.values && existingData.values.length);
 
-  const r2 = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Sessions!A1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
-    { method:'POST', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values:[sessionRow] }) }
+  const rows = [];
+  if(hasPriorSession){
+    const time = new Date(entry.date).toLocaleTimeString(undefined, { hour:'2-digit', minute:'2-digit' });
+    rows.push([`— ${time} —`, '', '', '']);
+  }
+  rows.push(...exerciseRowsForEntry(entry));
+
+  const appendRange = `'${title}'!A1`;
+  const appendRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(appendRange)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+    { method:'POST', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values: rows }) }
   );
-  if(!r2.ok) throw new Error('Sessions append failed (' + r2.status + ')');
+  if(!appendRes.ok) throw new Error('Append failed for "' + title + '" (' + appendRes.status + ')');
 }
 
 async function syncAll(showAlerts){

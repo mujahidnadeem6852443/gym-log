@@ -189,7 +189,8 @@
     background:var(--panel-2); border:1px solid transparent; position:relative;
   }
   .cal-day.empty{background:transparent;}
-  .cal-day.has-workout{border-color:var(--accent-dim); cursor:pointer;}
+  .cal-day:not(.empty){cursor:pointer;}
+  .cal-day.has-workout{border-color:var(--accent-dim);}
   .cal-day.has-workout .cal-dot{width:5px; height:5px; border-radius:50%; background:var(--accent); margin-top:2px;}
   .cal-day.rest-day .cal-dot-rest{width:4px; height:4px; border-radius:50%; border:1px solid var(--line); margin-top:2px;}
   .cal-day.today{outline:1px solid var(--blue);}
@@ -207,7 +208,11 @@
     padding-top:14px;
   }
   .day-detail.open{display:block;}
-  .day-detail-title{font-size:13px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--accent); margin-bottom:10px;}
+  .day-detail-head{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px;}
+  .day-detail-title{font-size:13px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--accent);}
+  .dd-day-nav{display:flex; gap:6px; flex-shrink:0;}
+  .dd-day-nav button{padding:6px 10px; font-size:14px;}
+  .dd-rest-note{color:var(--muted); font-size:13px; padding:10px 0;}
   .dd-exercise{margin-bottom:12px;}
   .dd-exercise-name{font-weight:800; font-size:13px; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;}
   .dd-set-line{font-family:var(--mono); font-size:13px; color:var(--text); opacity:0.9; padding:2px 0;}
@@ -306,7 +311,13 @@
       <span><span class="legend-dot rest"></span> Rest day</span>
     </div>
     <div class="day-detail" id="dayDetail">
-      <div class="day-detail-title" id="dayDetailTitle"></div>
+      <div class="day-detail-head">
+        <div class="day-detail-title" id="dayDetailTitle"></div>
+        <div class="dd-day-nav">
+          <button class="btn-ghost" id="dayDetailPrev" aria-label="Previous day">‹</button>
+          <button class="btn-ghost" id="dayDetailNext" aria-label="Next day">›</button>
+        </div>
+      </div>
       <div id="dayDetailBody"></div>
       <button class="btn-ghost dd-close" id="dayDetailClose">Close</button>
     </div>
