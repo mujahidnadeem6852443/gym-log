@@ -24,6 +24,8 @@
     --muted:#8b9199;
     --accent:#ff5a1f;
     --accent-dim:#7a2c10;
+    --green:#5fd88f;
+    --green-dim:#1d5c3a;
     --blue:#4da8ff;
     --mono: ui-monospace, "SF Mono", "Roboto Mono", Menlo, Consolas, monospace;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -35,17 +37,16 @@
   header{
     position:sticky; top:0; z-index:10;
     background:linear-gradient(180deg, var(--bg) 80%, transparent);
-    padding:18px 16px 8px;
+    padding:calc(env(safe-area-inset-top, 0px) + 26px) 12px 8px 20px;
     display:flex; align-items:center; justify-content:space-between;
   }
   header h1{
-    font-size:15px; letter-spacing:3px; text-transform:uppercase;
-    font-weight:800; margin:0; color:var(--muted);
+    font-size:22px; letter-spacing:0.2px; text-transform:none;
+    font-weight:800; margin:0; color:var(--text);
   }
-  header .dot{color:var(--accent);}
   .gear-btn{
-    background:none; border:none; color:var(--muted); font-size:19px;
-    padding:4px 6px; line-height:1;
+    background:none; border:none; color:var(--muted); font-size:22px;
+    padding:10px 12px; line-height:1; margin:-10px -12px -10px 0;
   }
 
   /* Settings panel (Google account + sync) */
@@ -211,15 +212,16 @@
   }
   .cal-day.empty{background:transparent;}
   .cal-day:not(.empty){cursor:pointer;}
-  .cal-day.has-workout{border-color:var(--accent-dim);}
-  .cal-day.has-workout .cal-dot{width:5px; height:5px; border-radius:50%; background:var(--accent); margin-top:2px;}
-  .cal-day.rest-day .cal-dot-rest{width:4px; height:4px; border-radius:50%; border:1px solid var(--line); margin-top:2px;}
+  .cal-day.has-workout{border-color:var(--green-dim);}
+  .cal-day.has-workout .cal-dot{width:5px; height:5px; border-radius:50%; background:var(--green); margin-top:2px;}
+  .cal-day.rest-day{border-color:var(--accent-dim);}
+  .cal-day.rest-day .cal-dot-rest{width:5px; height:5px; border-radius:50%; background:var(--accent); margin-top:2px;}
   .cal-day.today{outline:1px solid var(--blue);}
   .cal-day:not(.has-workout):not(.empty){color:var(--muted);}
   .cal-legend{display:flex; gap:16px; justify-content:center; margin-top:12px; font-size:11px; color:var(--muted);}
   .cal-legend span{display:inline-flex; align-items:center; gap:5px;}
-  .legend-dot{width:6px; height:6px; border-radius:50%; background:var(--accent); display:inline-block;}
-  .legend-dot.rest{background:transparent; border:1px solid var(--line);}
+  .legend-dot{width:6px; height:6px; border-radius:50%; background:var(--green); display:inline-block;}
+  .legend-dot.rest{background:var(--accent);}
 
   /* Day detail panel */
   .day-detail{
@@ -261,7 +263,7 @@
 <body>
 
 <header>
-  <h1>Gym<span class="dot">•</span>Log</h1>
+  <h1>Gym Log</h1>
   <button class="gear-btn" id="settingsToggle" aria-label="Settings">⚙</button>
 </header>
 
