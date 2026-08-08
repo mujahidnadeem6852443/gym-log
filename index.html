@@ -48,7 +48,7 @@
   }
   header .dot{color:var(--green); padding:0 1px;}
   .gear-btn{
-    background:none; border:none; color:var(--muted); font-size:22px;
+    background:none; border:none; color:var(--text); font-size:22px;
     padding:10px 12px; line-height:1; margin:-10px -12px -10px 0;
   }
 
@@ -64,7 +64,7 @@
   .settings-panel.open{display:block;}
   .settings-panel label{
     font-size:11px; letter-spacing:2px; text-transform:uppercase;
-    color:var(--muted); font-weight:700; display:block; margin-bottom:8px;
+    color:var(--text); font-weight:700; display:block; margin-bottom:8px;
   }
   .settings-panel input{
     width:100%; background:var(--panel-2); border:1px solid var(--line);
@@ -74,18 +74,18 @@
   .settings-panel input:focus{border-color:var(--blue);}
   .settings-row{display:flex; gap:8px; margin-bottom:4px;}
   .settings-row button{flex:1;}
-  .settings-hint{font-size:11px; color:var(--muted); line-height:1.5; margin:2px 0 14px;}
+  .settings-hint{font-size:11px; color:var(--text); line-height:1.5; margin:2px 0 14px;}
   .settings-hint a{color:var(--blue);}
   .settings-divider{border:none; border-top:1px solid var(--line); margin:14px 0;}
   .account-row{display:flex; align-items:center; gap:10px; margin-bottom:12px;}
   .account-avatar{width:34px; height:34px; border-radius:50%; background:var(--panel-2); border:1px solid var(--line); flex-shrink:0; object-fit:cover;}
   .account-info{flex:1; min-width:0;}
   .account-email{font-size:13px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
-  .account-sub{font-size:11px; color:var(--muted);}
+  .account-sub{font-size:11px; color:var(--text);}
   .unit-toggle{display:flex; gap:8px; margin-bottom:14px;}
   .unit-toggle button{flex:1; padding:9px;}
   .unit-toggle button.active{background:var(--blue); color:#04121f; border-color:var(--blue);}
-  .sync-status{font-size:12px; margin-top:10px; color:var(--muted); line-height:1.6;}
+  .sync-status{font-size:12px; margin-top:10px; color:var(--text); line-height:1.6;}
   .sync-status.ok{color:#5fd88f;}
   .sync-status.err{color:#ff6b6b;}
   .sync-badge{
@@ -107,11 +107,11 @@
   }
   .gsi-btn:disabled{opacity:0.5;}
   .gsi-btn svg{width:18px; height:18px; flex-shrink:0;}
-  .security-note{font-size:11px; color:var(--muted); line-height:1.5; margin:10px 0 0; padding-top:10px; border-top:1px solid var(--line);}
+  .security-note{font-size:11px; color:var(--text); line-height:1.5; margin:10px 0 0; padding-top:10px; border-top:1px solid var(--line);}
 
   .setup-details{margin-bottom:14px;}
   .setup-details summary{
-    font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:var(--muted);
+    font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:var(--text);
     font-weight:700; cursor:pointer; padding:4px 0;
   }
   .setup-details[open] summary{color:var(--text); margin-bottom:10px;}
@@ -127,7 +127,7 @@
   }
   .timer-label{
     font-size:11px; letter-spacing:3px; text-transform:uppercase;
-    color:var(--muted); font-weight:700; margin-bottom:6px;
+    color:var(--text); font-weight:700; margin-bottom:6px;
   }
   .timer-display{
     font-family:var(--mono);
@@ -152,13 +152,13 @@
   button:disabled{opacity:0.5;}
   .btn-primary{background:var(--blue); color:#04121f; border-color:var(--blue);}
   .btn-stop{background:var(--accent); color:#210a00; border-color:var(--accent);}
-  .btn-ghost{background:transparent; color:var(--muted); border:1px solid var(--line);}
+  .btn-ghost{background:transparent; color:var(--text); border:1px solid var(--line);}
   .btn-danger{background:transparent; color:#ff6b6b; border:1px solid #3a2222;}
 
   section{margin:0 16px 20px;}
   .section-title{
     font-size:11px; letter-spacing:3px; text-transform:uppercase;
-    color:var(--muted); font-weight:700; margin:0 0 10px 4px;
+    color:var(--text); font-weight:700; margin:0 0 10px 4px;
     display:flex; align-items:center; justify-content:space-between;
   }
 
@@ -177,8 +177,8 @@
     letter-spacing:0.5px; padding:6px 2px; outline:none;
   }
   .exercise-name:focus{border-bottom-color:var(--accent);}
-  .exercise-name::placeholder{color:#4a4e54; text-transform:none; font-weight:600;}
-  .remove-exercise{background:none; border:none; color:var(--muted); font-size:18px; padding:4px 8px; line-height:1;}
+  .exercise-name::placeholder{color:var(--muted); text-transform:none; font-weight:600;}
+  .remove-exercise{background:none; border:none; color:var(--text); font-size:18px; padding:4px 8px; line-height:1;}
 
   /* Exercise-name autocomplete dropdown */
   .autocomplete-wrap{position:relative; flex:1; min-width:0;}
@@ -196,7 +196,7 @@
   .autocomplete-item + .autocomplete-item{border-top:1px solid var(--line);}
 
   .last-performance{
-    font-family:var(--mono); font-size:12px; color:var(--muted);
+    font-family:var(--mono); font-size:12px; color:var(--text);
     margin:0 0 10px 2px; display:none;
   }
   .last-performance b{color:var(--blue); font-weight:700;}
@@ -204,7 +204,7 @@
   .exercise-muscle{
     -webkit-appearance:none; appearance:none;
     background:var(--panel-2); border:1px solid var(--line); border-radius:8px;
-    color:var(--muted); font-family:var(--sans); font-size:12px; font-weight:700;
+    color:var(--text); font-family:var(--sans); font-size:12px; font-weight:700;
     text-transform:uppercase; letter-spacing:0.5px;
     padding:7px 26px 7px 10px; margin:0 0 10px 2px; outline:none;
     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath fill='%238b9199' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
@@ -213,9 +213,9 @@
   .exercise-muscle:focus{border-color:var(--blue);}
 
   .set-row{display:grid; grid-template-columns:22px 1fr 1fr 30px; gap:8px; align-items:center; margin-bottom:8px;}
-  .set-num{font-family:var(--mono); color:var(--muted); font-size:13px; text-align:center;}
+  .set-num{font-family:var(--mono); color:var(--text); font-size:13px; text-align:center;}
   .set-field{display:flex; flex-direction:column;}
-  .set-field label{font-size:9px; letter-spacing:1.5px; color:var(--muted); margin-bottom:3px; margin-left:2px;}
+  .set-field label{font-size:9px; letter-spacing:1.5px; color:var(--text); margin-bottom:3px; margin-left:2px;}
   .set-field input{
     background:var(--panel-2); border:1px solid var(--line); border-radius:8px;
     color:var(--text); font-family:var(--mono); font-size:16px; padding:9px 8px; width:100%; outline:none;
@@ -227,9 +227,9 @@
     width:100%; margin-top:4px; background:var(--panel-2); color:var(--accent);
     border:1px dashed var(--accent-dim); font-size:20px; font-weight:800; padding:9px; border-radius:8px;
   }
-  .add-exercise-btn{width:100%; padding:15px; font-size:15px; background:var(--panel); border:1px dashed var(--line); color:var(--muted);}
+  .add-exercise-btn{width:100%; padding:15px; font-size:15px; background:var(--panel); border:1px dashed var(--line); color:var(--text);}
   .save-workout-btn{width:100%; margin-top:14px; padding:16px; font-size:15px; letter-spacing:1px; text-transform:uppercase;}
-  .empty-note{color:var(--muted); font-size:13px; text-align:center; padding:20px 10px;}
+  .empty-note{color:var(--text); font-size:13px; text-align:center; padding:20px 10px;}
 
   /* Calendar */
   .calendar-card{
@@ -239,7 +239,7 @@
   .cal-nav-btn{background:var(--panel-2); border:1px solid var(--line); padding:8px 14px; font-size:16px; font-weight:800;}
   .cal-month-label{font-size:14px; font-weight:800; letter-spacing:1px; text-transform:uppercase;}
   .cal-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:4px;}
-  .cal-dow{font-size:10px; color:var(--muted); text-align:center; font-weight:700; padding-bottom:4px;}
+  .cal-dow{font-size:10px; color:var(--text); text-align:center; font-weight:700; padding-bottom:4px;}
   .cal-day{
     aspect-ratio:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
     border-radius:8px; font-family:var(--mono); font-size:13px; color:var(--text);
@@ -257,8 +257,8 @@
   .cal-day.rest-day{border-color:var(--accent-dim);}
   .cal-day.rest-day .cal-dot-rest{width:5px; height:5px; border-radius:50%; background:var(--accent); margin-top:2px;}
   .cal-day.today{outline:1px solid var(--blue);}
-  .cal-day:not(.has-workout):not(.empty){color:var(--muted);}
-  .cal-legend{display:flex; gap:16px; justify-content:center; margin-top:12px; font-size:11px; color:var(--muted);}
+  .cal-day:not(.has-workout):not(.empty){color:var(--text);}
+  .cal-legend{display:flex; gap:16px; justify-content:center; margin-top:12px; font-size:11px; color:var(--text);}
   .cal-legend span{display:inline-flex; align-items:center; gap:5px;}
   .legend-dot{width:6px; height:6px; border-radius:50%; background:var(--green); display:inline-block;}
   .legend-dot.rest{background:var(--accent);}
@@ -275,7 +275,7 @@
   .day-detail-title{font-size:13px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--accent);}
   .dd-day-nav{display:flex; gap:6px; flex-shrink:0;}
   .dd-day-nav button{padding:6px 10px; font-size:14px;}
-  .dd-rest-note{color:var(--muted); font-size:13px; padding:10px 0;}
+  .dd-rest-note{color:var(--text); font-size:13px; padding:10px 0;}
   .dd-duration{font-family:var(--mono); font-size:12px; color:var(--blue); margin-bottom:10px;}
   .dd-exercise{margin-bottom:12px;}
   .dd-exercise-name{font-weight:800; font-size:13px; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;}
@@ -291,8 +291,8 @@
   .history-item{background:var(--panel); border:1px solid var(--line); border-radius:12px; margin-bottom:10px; overflow:hidden;}
   .history-head{padding:12px 14px; display:flex; justify-content:space-between; align-items:center; cursor:pointer;}
   .history-date{font-weight:700; font-size:14px;}
-  .history-meta{color:var(--muted); font-size:12px; margin-top:2px;}
-  .history-chevron{color:var(--muted); font-size:12px;}
+  .history-meta{color:var(--text); font-size:12px; margin-top:2px;}
+  .history-chevron{color:var(--text); font-size:12px;}
   .history-body{display:none; padding:0 14px 14px; border-top:1px solid var(--line);}
   .history-body.open{display:block;}
   .hist-exercise{margin-top:10px;}
@@ -301,7 +301,7 @@
   .hist-actions{margin-top:12px; display:flex; justify-content:flex-end; gap:8px;}
   .sync-tag{
     font-size:10px; letter-spacing:1px; text-transform:uppercase; padding:2px 6px; border-radius:5px;
-    margin-left:6px; background:var(--panel-2); color:var(--muted); font-weight:700;
+    margin-left:6px; background:var(--panel-2); color:var(--text); font-weight:700;
   }
   .sync-tag.synced{color:#5fd88f;}
 
