@@ -140,6 +140,47 @@ A few things worth knowing:
   case-insensitively, so "Bench Press" and "bench press" are tracked as the
   same exercise.
 
+### 📅 Attendance Progress
+
+Separate from per-exercise Progress above, Gym Log also tracks how
+consistently you're training overall — how many days you went, and how much
+total work you did, week to week and month to month.
+
+Switch between two views:
+
+- **Weekly** — attendance and total training load for each week, with weeks
+  starting on **Sunday**
+- **Monthly** — the same two numbers rolled up by calendar month
+
+Each view shows two charts sharing the same time periods on their x-axis:
+
+- A **line chart** of total training load (reps × weight, summed across
+  every set of every exercise, every day in the period)
+- A **bar chart** of days attended, with a dashed reference line at the
+  maximum possible days in that period (7 for a week, 28–31 for a month)
+
+Each period is compared to the one before it and colored the same way as
+Progress — improved, stable, or declined — with a plain-language summary:
+
+```text
+↑ up 6% load vs last week · up on attendance (5/7 days)
+```
+
+Below the charts, every period is also listed with its date range, days
+attended, and total load.
+
+A few things worth knowing:
+
+- **Fully independent from per-exercise Progress.** Attendance Progress has
+  its own data, its own charts, and its own Google Sheet tabs — it never
+  reads or affects exercise-level trend tracking, and vice versa.
+- **This is entirely local**, same as Progress — it's derived fresh from
+  your device's workout history every time you save, edit, delete, or
+  restore a workout.
+- **Google Sheets sync** writes Attendance Progress to its own tabs (see
+  **Google Sheet Structure** below) so weekly/monthly history survives a
+  restore on another device, same as your workouts.
+
 ---
 
 ## 💾 Can I Use Gym Log Without Signing In?
@@ -160,6 +201,7 @@ Without signing in, Gym Log uses browser `localStorage`, so you can still:
 - Use the calendar
 - Edit locally stored workouts
 - See progressive-overload trend charts
+- See weekly and monthly attendance progress
 
 ### Limitation of local-only mode
 
@@ -235,7 +277,8 @@ The app creates a spreadsheet named:
 Gym Log Data
 ```
 
-It contains an `Overview` tab, and every workout day gets its own date tab.
+It contains an `Overview` tab, a `Weekly Progress` tab, a `Monthly Progress`
+tab, and every workout day gets its own date tab.
 
 Example:
 
@@ -243,6 +286,8 @@ Example:
 Gym Log Data
 
 ├── Overview
+├── Weekly Progress
+├── Monthly Progress
 ├── 6 Aug 2026
 ├── 7 Aug 2026
 ├── 8 Aug 2026
@@ -278,6 +323,23 @@ Set 3 → 10 reps × 55 kg
 ```
 
 Workout duration is stored separately in the day's Sheet tab so that it can also be restored on another device.
+
+The `Weekly Progress` tab holds one row per week, including the week's date range:
+
+| Week Start | Week End | Days Attended | Total Load |
+|------------|----------|----------------|------------|
+| 2026-08-02 | 2026-08-08 | 5 | 7200 |
+
+The `Monthly Progress` tab holds one row per calendar month:
+
+| Month | Days Attended | Total Load |
+|-------|----------------|------------|
+| Aug 2026 | 7 | 9440 |
+
+Unlike the daily workout tabs, these two tabs are derived summaries, not an
+append-only log — each sync recomputes them from your full history and
+rewrites the tab, so they always reflect the current state rather than
+accumulating stale rows.
 
 ---
 
@@ -677,6 +739,7 @@ The current focus is:
 - Workout calendar with muscle-group indicators
 - Session duration, saved independently of exercises
 - Progressive-overload trend tracking per exercise
+- Weekly and monthly attendance and training-load tracking
 - Google Sheets backup
 - Restore capability
 - Duplicate-safe synchronization
