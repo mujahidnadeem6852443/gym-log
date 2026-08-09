@@ -181,6 +181,44 @@ A few things worth knowing:
   **Google Sheet Structure** below) so weekly/monthly history survives a
   restore on another device, same as your workouts.
 
+### 👋 Your Name
+
+Gym Log can greet you by name — a small personal touch, not an account
+system.
+
+The very first time you open the app, the Settings panel opens automatically
+and asks:
+
+```text
+👋 Welcome! What should we call you?
+```
+
+Enter a name once and save it. From then on, it's shown right under the
+logo:
+
+```text
+Gym·Log
+Hi, Bruce Wayne
+```
+
+You can change it anytime from **Settings → Your Name**.
+
+A few things worth knowing:
+
+- **Stored locally first.** Your name is saved on the device the moment you
+  save it — no sign-in required.
+- **Follows your Google account, not the device.** If you're signed in,
+  saving or editing your name also writes it to the `Overview` tab of your
+  Google Sheet. Signing in on a new device with no local name yet adopts
+  whatever's already saved in the Sheet, so your name follows you rather
+  than resetting per device.
+- **Falls back to your Google account's name** only if the Sheet has no name
+  saved yet (e.g. brand new spreadsheet) — after that, the Sheet's value
+  takes over as the source of truth.
+- **A name already entered on a device is never silently overwritten** by
+  sign-in — the auto-adopt only fills in a name when the device doesn't
+  have one yet.
+
 ---
 
 ## 💾 Can I Use Gym Log Without Signing In?
@@ -202,6 +240,7 @@ Without signing in, Gym Log uses browser `localStorage`, so you can still:
 - Edit locally stored workouts
 - See progressive-overload trend charts
 - See weekly and monthly attendance progress
+- Set and edit your display name
 
 ### Limitation of local-only mode
 
@@ -293,6 +332,10 @@ Gym Log Data
 ├── 8 Aug 2026
 └── ...
 ```
+
+The `Overview` tab also holds your display name, in cell `B4` (with the
+label `Name` in `A4`, right below the intro text in `A1`/`A2`) — this is
+what lets your name follow your account across devices.
 
 Each daily tab contains a simple workout table:
 
@@ -740,6 +783,7 @@ The current focus is:
 - Session duration, saved independently of exercises
 - Progressive-overload trend tracking per exercise
 - Weekly and monthly attendance and training-load tracking
+- A personal touch (display name) that follows your account
 - Google Sheets backup
 - Restore capability
 - Duplicate-safe synchronization
