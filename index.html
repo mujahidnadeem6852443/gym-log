@@ -304,6 +304,47 @@
     border-radius:5px; padding:2px 6px; margin-left:8px; vertical-align:middle;
   }
 
+  /* Progress (progressive-overload trend chart) */
+  .progress-card{ background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px; }
+  .progress-exercise-select{
+    width:100%; background:var(--panel-2); border:1px solid var(--line); border-radius:8px;
+    color:var(--text); font-size:14px; font-weight:700; padding:10px 30px 10px 12px; margin-bottom:12px; outline:none;
+    -webkit-appearance:none; appearance:none;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath fill='%238b9199' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:right 12px center; background-size:10px 6px;
+  }
+  .progress-exercise-select:focus{ border-color:var(--blue); }
+  .progress-empty{ color:var(--muted); font-size:13px; text-align:center; padding:26px 10px; }
+  .progress-chart{ width:100%; height:auto; display:block; }
+
+  .progress-legend{ display:flex; gap:16px; justify-content:center; margin:10px 0 2px; font-size:11px; color:var(--muted); }
+  .progress-legend span{ display:inline-flex; align-items:center; gap:5px; }
+  .legend-dot-status{ width:7px; height:7px; border-radius:50%; display:inline-block; }
+  .legend-dot-status.improved{ background:var(--green); }
+  .legend-dot-status.stable{ background:var(--blue); }
+  .legend-dot-status.declined{ background:#ff6b6b; }
+
+  .progress-summary{ text-align:center; font-size:13px; font-weight:700; margin:12px 0 4px; color:var(--text); }
+  .progress-summary .trend-up{ color:var(--green); }
+  .progress-summary .trend-flat{ color:var(--blue); }
+  .progress-summary .trend-down{ color:#ff6b6b; }
+
+  .progress-session-list{ margin-top:10px; border-top:1px solid var(--line); padding-top:4px; }
+  .progress-session-row{
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+    padding:9px 2px; font-size:13px; border-bottom:1px solid var(--line);
+  }
+  .progress-session-row:last-child{ border-bottom:none; }
+  .progress-session-date{ color:var(--text); font-weight:600; flex-shrink:0; }
+  .progress-session-volume{ font-family:var(--mono); color:var(--muted); font-size:12px; flex:1; text-align:right; padding-right:8px; }
+  .progress-session-badge{
+    font-size:10px; letter-spacing:0.5px; text-transform:uppercase; font-weight:800;
+    padding:3px 7px; border-radius:5px; flex-shrink:0; color:var(--muted);
+  }
+  .progress-session-badge.improved{ color:var(--green); background:rgba(95,216,143,0.14); }
+  .progress-session-badge.stable{ color:var(--blue); background:rgba(77,168,255,0.14); }
+  .progress-session-badge.declined{ color:#ff6b6b; background:rgba(255,107,107,0.14); }
+
   /* History */
   .history-item{background:var(--panel); border:1px solid var(--line); border-radius:12px; margin-bottom:10px; overflow:hidden;}
   .history-head{padding:12px 14px; display:flex; justify-content:space-between; align-items:center; cursor:pointer;}
@@ -455,6 +496,21 @@
       <div id="dayDetailBody"></div>
       <button class="btn-ghost dd-close" id="dayDetailClose">Close</button>
     </div>
+  </div>
+</section>
+
+<section>
+  <div class="section-title">Progress</div>
+  <div class="progress-card">
+    <select class="progress-exercise-select" id="progressExerciseSelect"></select>
+    <div id="progressChartWrap"></div>
+    <div class="progress-legend" id="progressLegend">
+      <span><span class="legend-dot-status improved"></span> Improved</span>
+      <span><span class="legend-dot-status stable"></span> Stable</span>
+      <span><span class="legend-dot-status declined"></span> Declined</span>
+    </div>
+    <div id="progressSummary" class="progress-summary"></div>
+    <div id="progressSessionList" class="progress-session-list"></div>
   </div>
 </section>
 
