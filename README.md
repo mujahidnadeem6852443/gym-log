@@ -2,7 +2,7 @@
 
 A fast, mobile-first, offline-first workout logger built for simple strength-training tracking.
 
-Gym Log lets you record exercises, sets, reps, weights, muscle groups, and workout duration directly from your phone. Your workout is saved locally as you type, so the app continues working even without an internet connection.
+Gym Log lets you record exercises, sets, reps, weights, muscle groups, and workout duration directly from your phone. Your workout is saved locally as you type, so the app continues working even without an internet connection. It also tells you whether you're actually progressing — every exercise you've logged more than once gets a trend chart comparing each session's total volume to the one before it.
 
 Optionally, you can sign in with Google and sync your workout history to a private Google Sheet stored inside your own Google Drive.
 
@@ -91,6 +91,55 @@ the information is merged into that day's workout instead of creating unnecessar
 
 Saved workouts can also be edited from history.
 
+### 🚀 Launch Screen
+
+On every open, Gym Log shows a brief (~2 second) splash screen with the app
+logo before revealing the app — the same idea as a native app's launch
+screen, so the app doesn't flash unstyled content while it loads.
+
+### 📈 Progress & Progressive Overload
+
+Gym Log tracks whether you're actually getting stronger at each exercise —
+not just logging numbers, but telling you what they mean.
+
+For every exercise you've logged **twice or more**, Gym Log computes that
+session's **total volume** (reps × weight, summed across every set) and
+compares it to your **previous session of that same exercise**:
+
+| Change vs. last time | Status |
+|---|---|
+| More than +2% | 🟢 **Improved** |
+| Within ±2% | 🔵 **Stable** |
+| More than -2% | 🔴 **Declined** |
+
+This is shown as a line chart — pick an exercise from the dropdown and see
+every logged session plotted over time, with each segment colored by
+whether that step improved, held steady, or dropped. The most recent value
+is labeled directly on the chart, a legend keeps the colors unambiguous,
+and a plain-language summary line spells it out either way:
+
+```text
+↑ up 6% vs last time (1958 kg)
+```
+
+Below the chart, every session for that exercise is also listed with its
+date, total volume, and trend badge — the full detail behind the chart, not
+just the picture.
+
+A few things worth knowing:
+
+- **Two sessions minimum.** An exercise you've only logged once has nothing
+  to compare against yet, so it won't appear in the picker until you log it
+  again.
+- **This is entirely local.** Progress is computed from whatever is in your
+  device's history — it doesn't read from or write to the Google Sheet, and
+  it updates automatically the moment you save, edit, delete, or restore a
+  workout, since it's always derived fresh from the same history those
+  actions already keep in sync.
+- **Exercise names are matched the same way autocomplete works** —
+  case-insensitively, so "Bench Press" and "bench press" are tracked as the
+  same exercise.
+
 ---
 
 ## 💾 Can I Use Gym Log Without Signing In?
@@ -110,6 +159,7 @@ Without signing in, Gym Log uses browser `localStorage`, so you can still:
 - View history
 - Use the calendar
 - Edit locally stored workouts
+- See progressive-overload trend charts
 
 ### Limitation of local-only mode
 
@@ -624,10 +674,9 @@ The current focus is:
 - Fast exercise entry
 - Reliable local storage
 - One history record per day
-- Workout calendar
-- Muscle-group indicators
-- Session duration
-- Independent Save Time
+- Workout calendar with muscle-group indicators
+- Session duration, saved independently of exercises
+- Progressive-overload trend tracking per exercise
 - Google Sheets backup
 - Restore capability
 - Duplicate-safe synchronization
@@ -637,23 +686,21 @@ The current focus is:
 
 # 🔮 Future Ideas
 
-Possible future improvements include:
+Already shipped, despite once being on this list: exercise autocomplete,
+"last time" values shown while logging, training-volume analytics, and
+exercise progression charts (see **Progress & Progressive Overload** above).
 
-- Exercise autocomplete
-- Exercise library
-- Previous workout comparison
-- "Last time" values
-- Personal records
+Possible future improvements still on the table:
+
+- Personal records (heaviest weight, best-rep-at-weight, per exercise)
 - Estimated 1RM
-- Training volume analytics
-- Exercise progression charts
-- Rest timer
-- Workout templates
-- Push / Pull / Legs templates
-- RPE / RIR
-- Body-weight tracking
-- Workout notes
-- Progressive overload recommendations
+- Active progressive-overload suggestions (a target weight/rep goal for your
+  next session, not just a trend after the fact)
+- Rest timer between sets
+- Workout templates (e.g. Push / Pull / Legs)
+- RPE / RIR tracking
+- Body-weight tracking over time
+- Per-exercise and per-workout notes
 
 The goal is to add these features without sacrificing the simplicity and speed of the current app.
 
