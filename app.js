@@ -6,6 +6,11 @@ const K_CLIENT_ID = 'gymlog_client_id';
 const K_WEIGHT_UNIT = 'gymlog_weight_unit';
 const K_LAST_EMAIL = 'gymlog_last_email';
 const K_DISPLAY_NAME = 'gymlog_display_name';
+const K_ACCESS_TOKEN = 'gymlog_access_token';
+const K_TOKEN_EXPIRY = 'gymlog_token_expiry';
+const K_USER_PICTURE = 'gymlog_user_picture';
+const K_SESSION_STARTED = 'gymlog_session_started';
+const SESSION_MAX_MS = 3 * 60 * 60 * 1000; // 3 hours — a full workout should never need to reconnect
 const K_PENDING_DELETES = 'gymlog_pending_deletes';
 const K_EXERCISE_DICT = 'gymlog_exercise_dict';
 function sheetIdKey(email){ return 'gymlog_sheet_id_' + email; }
@@ -1400,9 +1405,58 @@ let tokenClient = null;
 let accessToken = null;
 let tokenExpiry = 0;
 let userEmail = localStorage.getItem(K_LAST_EMAIL) || null;
-let userPicture = null;
+let userPicture = localStorage.getItem(K_USER_PICTURE) || null;
 let spreadsheetId = null;
 let sheetMetaCache = null; // { [tabTitle]: sheetId } for the current spreadsheet
+
+// ---------- Session persistence ----------
+// The token-client OAuth flow used here (no backend, so no refresh token)
+// only ever issues short-lived (~1hr) access tokens. Persisting the token
+// itself means a reload or a swiped-away-and-reopened PWA doesn't need to
+// reconnect as long as the token's own lifetime hasn't run out. On top of
+// that, an explicit 3-hour app-level session cap — long enough to cover a
+// full workout — auto-signs-out once it's exceeded, independent of whether
+// the underlying Google browser session is still alive.
+function sessionExpired(){
+  const started = Number(localStorage.getItem(K_SESSION_STARTED) || 0);
+  return !started || (Date.now() - started > SESSION_MAX_MS);
+}
+function startSession(){
+  localStorage.setItem(K_SESSION_STARTED, String(Date.now()));
+}
+function persistToken(){
+  if(accessToken){
+    localStorage.setItem(K_ACCESS_TOKEN, accessToken);
+    localStorage.setItem(K_TOKEN_EXPIRY, String(tokenExpiry));
+  } else {
+    localStorage.removeItem(K_ACCESS_TOKEN);
+    localStorage.removeItem(K_TOKEN_EXPIRY);
+  }
+}
+function clearSession(){
+  accessToken = null; tokenExpiry = 0; userEmail = null; userPicture = null; spreadsheetId = null; sheetMetaCache = null;
+  localStorage.removeItem(K_LAST_EMAIL);
+  localStorage.removeItem(K_USER_PICTURE);
+  localStorage.removeItem(K_ACCESS_TOKEN);
+  localStorage.removeItem(K_TOKEN_EXPIRY);
+  localStorage.removeItem(K_SESSION_STARTED);
+}
+
+// Restore a still-valid token across reloads/relaunches — skips reconnect
+// entirely when possible. If the 3-hour session window has already lapsed,
+// sign out quietly instead of leaving stale credentials sitting around.
+if(userEmail){
+  if(sessionExpired()){
+    clearSession();
+  } else {
+    const storedToken = localStorage.getItem(K_ACCESS_TOKEN);
+    const storedExpiry = Number(localStorage.getItem(K_TOKEN_EXPIRY) || 0);
+    if(storedToken && Date.now() < storedExpiry){
+      accessToken = storedToken;
+      tokenExpiry = storedExpiry;
+    }
+  }
+}
 
 function setSyncStatus(kind, text){
   syncStatus.className = 'sync-status' + (kind ? ' ' + kind : '');
@@ -1472,6 +1526,16 @@ function initTokenClientIfReady(){
     callback: () => {}
   });
   updateAuthUI();
+
+  // Best-effort: if we're still within the 3-hour session window but the
+  // stored token itself has already expired (app was closed for over an
+  // hour), try a silent, non-interactive refresh so no manual tap is
+  // needed. Some browsers only allow requestAccessToken off a real click,
+  // in which case this quietly fails and the "Reconnect" button (still
+  // shown by updateAuthUI above) is the fallback.
+  if(userEmail && !accessToken && !sessionExpired()){
+    getValidToken().then(() => { updateAuthUI(); syncAll(false); }).catch(() => { updateAuthUI(); });
+  }
 }
 
 clientIdInput.value = localStorage.getItem(K_CLIENT_ID) || '';
@@ -1489,6 +1553,8 @@ signInBtn.addEventListener('click', () => {
     if(resp.error){ setSyncStatus('err', 'Sign-in failed: ' + resp.error); return; }
     accessToken = resp.access_token;
     tokenExpiry = Date.now() + (resp.expires_in * 1000) - 60000;
+    startSession(); // a fresh interactive sign-in starts a new 3-hour window
+    persistToken();
     await afterSignIn();
   };
   tokenClient.requestAccessToken({ prompt: 'consent' });
@@ -1498,10 +1564,19 @@ signOutBtn.addEventListener('click', () => {
   if(accessToken && window.google && google.accounts && google.accounts.oauth2){
     google.accounts.oauth2.revoke(accessToken, () => {});
   }
-  accessToken = null; tokenExpiry = 0; userEmail = null; userPicture = null; spreadsheetId = null; sheetMetaCache = null;
-  localStorage.removeItem(K_LAST_EMAIL);
+  clearSession();
   updateAuthUI();
 });
+
+// Enforce the 3-hour cap even if the app is left open continuously through
+// it (no reload to trigger the on-load check above).
+setInterval(() => {
+  if(userEmail && sessionExpired()){
+    clearSession();
+    updateAuthUI();
+    setSyncStatus('', 'Signed out after 3 hours — sign in again to keep syncing.');
+  }
+}, 60 * 1000);
 
 unitKgBtn.addEventListener('click', () => { localStorage.setItem(K_WEIGHT_UNIT, 'kg'); updateAuthUI(); renderExercises(); });
 unitLbBtn.addEventListener('click', () => { localStorage.setItem(K_WEIGHT_UNIT, 'lb'); updateAuthUI(); renderExercises(); });
@@ -1542,6 +1617,7 @@ async function afterSignIn(){
     userEmail = info.email;
     userPicture = info.picture || null;
     localStorage.setItem(K_LAST_EMAIL, userEmail);
+    localStorage.setItem(K_USER_PICTURE, userPicture || '');
     updateAuthUI();
     setSyncStatus('ok', 'Signed in. Preparing your Google Sheet…');
     await ensureSpreadsheet();
@@ -1587,19 +1663,25 @@ function isAuthError(err){
 }
 
 async function getValidToken(){
+  if(userEmail && sessionExpired()){
+    clearSession();
+    updateAuthUI();
+    throw new Error('login_required');
+  }
   if(accessToken && Date.now() < tokenExpiry) return accessToken;
   if(!tokenClient){
-    accessToken = null; updateAuthUI();
+    accessToken = null; persistToken(); updateAuthUI();
     throw new Error('Not configured');
   }
   return new Promise((resolve, reject) => {
     tokenClient.callback = (resp) => {
       if(resp.error){
-        accessToken = null; updateAuthUI();
+        accessToken = null; persistToken(); updateAuthUI();
         return reject(new Error(resp.error));
       }
       accessToken = resp.access_token;
       tokenExpiry = Date.now() + (resp.expires_in * 1000) - 60000;
+      persistToken();
       updateAuthUI();
       resolve(accessToken);
     };
