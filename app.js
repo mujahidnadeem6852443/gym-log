@@ -97,6 +97,7 @@ timerSaveBtn.addEventListener('click', () => {
 
   renderHistory();
   renderCalendar();
+  renderProgress();
   refreshSyncBadge();
 });
 
@@ -381,6 +382,7 @@ saveWorkoutBtn.addEventListener('click', () => {
 
   renderHistory();
   renderCalendar();
+  renderProgress();
   refreshSyncBadge();
 });
 
@@ -638,6 +640,7 @@ function renderEditForm(container, entry){
     editingEntryId = null;
     renderHistory();
     renderCalendar();
+    renderProgress();
   });
   cancelBtn.addEventListener('click', () => { editingEntryId = null; renderHistory(); });
 
@@ -695,7 +698,7 @@ function deleteWorkout(entry){
   pending.push(entry);
   savePendingDeletes(pending);
 
-  renderHistory(); renderCalendar();
+  renderHistory(); renderCalendar(); renderProgress();
 
   pendingDelete = { entry, index };
   showToast('Workout deleted', 'Undo', undoDelete);
@@ -708,7 +711,7 @@ function undoDelete(){
   history.splice(pendingDelete.index, 0, pendingDelete.entry);
   saveHistory();
   savePendingDeletes(loadPendingDeletes().filter(e => e.id !== pendingDelete.entry.id));
-  renderHistory(); renderCalendar();
+  renderHistory(); renderCalendar(); renderProgress();
   pendingDelete = null;
   hideToast();
 }
@@ -936,6 +939,182 @@ calNext.addEventListener('click', () => {
   dayDetail.classList.remove('open');
   renderCalendar();
 });
+
+// ---------- Progress (progressive overload) ----------
+// Status colors are duplicated here as hex (rather than referencing the CSS
+// custom properties) because they're written into dynamically generated SVG
+// markup — keep in sync with :root in index.html if the theme changes.
+const TREND_COLOR = { improved:'#5fd88f', stable:'#4da8ff', declined:'#ff6b6b', none:'#8b9199' };
+const CHART_INK = { line:'#2a2d31', muted:'#8b9199', text:'#ececee', ring:'#17191c' };
+
+function computeSetVolume(sets){
+  return sets.reduce((sum, s) => sum + (Number(s.reps) || 0) * (Number(s.weight) || 0), 0);
+}
+
+// Chronological (oldest-first) volume history for one exercise, each point
+// tagged with its trend vs. the immediately previous session of the same
+// exercise — the actual "progressive overload" comparison. A session within
+// 2% of the previous one's volume counts as stable rather than a false
+// improve/decline from rounding noise.
+function getExerciseTrend(exerciseName){
+  const key = exerciseName.trim().toLowerCase();
+  if(!key) return [];
+  const points = [];
+  [...history].reverse().forEach(entry => {
+    const ex = entry.exercises.find(e => e.name.trim().toLowerCase() === key);
+    if(ex && ex.sets.length){
+      points.push({ date: entry.date, volume: computeSetVolume(ex.sets) });
+    }
+  });
+  return points.map((p, i) => {
+    if(i === 0) return { ...p, status: null, diffPct: null };
+    const prev = points[i - 1];
+    const diffPct = prev.volume === 0 ? (p.volume > 0 ? 100 : 0) : ((p.volume - prev.volume) / prev.volume) * 100;
+    const status = Math.abs(diffPct) < 2 ? 'stable' : (diffPct > 0 ? 'improved' : 'declined');
+    return { ...p, status, diffPct };
+  });
+}
+
+// Only exercises with 2+ logged sessions have a trend to show.
+function getTrendableExercises(){
+  return getExerciseSuggestions().filter(name => getExerciseTrend(name).length >= 2);
+}
+
+function renderProgressChartSvg(points){
+  const W = 320, H = 176, padL = 34, padR = 14, padT = 16, padB = 26;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+
+  const volumes = points.map(p => p.volume);
+  const minV = Math.min(0, ...volumes);
+  const rawMax = Math.max(...volumes, 1);
+  const niceMax = Math.ceil(rawMax / 100) * 100;
+
+  const xFor = (i) => points.length === 1 ? padL + plotW / 2 : padL + (i / (points.length - 1)) * plotW;
+  const yFor = (v) => padT + plotH - ((v - minV) / ((niceMax - minV) || 1)) * plotH;
+
+  let svg = '';
+
+  // Gridlines: 4 horizontal steps, hairline, recessive, with rounded value labels.
+  const steps = 4;
+  for(let s = 0; s <= steps; s++){
+    const v = minV + (niceMax - minV) * (s / steps);
+    const y = yFor(v);
+    svg += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="${CHART_INK.line}" stroke-width="1"/>`;
+    svg += `<text x="${padL - 6}" y="${y + 3}" text-anchor="end" font-size="9" fill="${CHART_INK.muted}" font-family="ui-monospace,monospace">${Math.round(v)}</text>`;
+  }
+
+  // Line segments, colored by the ending point's trend status.
+  for(let i = 1; i < points.length; i++){
+    const x1 = xFor(i - 1), y1 = yFor(points[i - 1].volume), x2 = xFor(i), y2 = yFor(points[i].volume);
+    const color = TREND_COLOR[points[i].status] || TREND_COLOR.none;
+    svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="2" stroke-linecap="round"/>`;
+  }
+
+  // Points + sparse x-axis date labels (never every point past a handful).
+  const labelEvery = points.length <= 6 ? 1 : Math.ceil(points.length / 5);
+  points.forEach((p, i) => {
+    const x = xFor(i), y = yFor(p.volume);
+    const color = TREND_COLOR[p.status] || TREND_COLOR.none;
+    svg += `<circle cx="${x}" cy="${y}" r="5" fill="${color}" stroke="${CHART_INK.ring}" stroke-width="2"/>`;
+    if(i === 0 || i === points.length - 1 || i % labelEvery === 0){
+      const d = new Date(p.date);
+      svg += `<text x="${x}" y="${H - 8}" text-anchor="middle" font-size="9" fill="${CHART_INK.muted}" font-family="ui-monospace,monospace">${d.getMonth()+1}/${d.getDate()}</text>`;
+    }
+  });
+
+  // Direct label: value at the endpoint only (the one point the story is about).
+  const last = points[points.length - 1];
+  const lx = xFor(points.length - 1), ly = yFor(last.volume);
+  const labelAbove = ly > padT + 14;
+  svg += `<text x="${lx}" y="${labelAbove ? ly - 10 : ly + 18}" text-anchor="middle" font-size="11" font-weight="700" fill="${CHART_INK.text}" font-family="ui-monospace,monospace">${Math.round(last.volume)}</text>`;
+
+  return `<svg viewBox="0 0 ${W} ${H}" class="progress-chart" role="img" aria-label="Volume trend over time">${svg}</svg>`;
+}
+
+function renderProgressSummaryHtml(points){
+  const last = points[points.length - 1];
+  const unit = getWeightUnit();
+  if(!last.status){
+    return `First logged session — ${Math.round(last.volume)} ${unit} total volume. Log it again to see a trend.`;
+  }
+  const pct = Math.abs(Math.round(last.diffPct));
+  if(last.status === 'stable'){
+    return `<span class="trend-flat">→</span> About the same as last time (${Math.round(last.volume)} ${unit})`;
+  }
+  const cls = last.status === 'improved' ? 'trend-up' : 'trend-down';
+  const arrow = last.status === 'improved' ? '↑' : '↓';
+  const verb = last.status === 'improved' ? 'up' : 'down';
+  return `<span class="${cls}">${arrow}</span> ${verb} ${pct}% vs last time (${Math.round(last.volume)} ${unit})`;
+}
+
+function renderProgressSessionList(points, container){
+  container.innerHTML = '';
+  [...points].reverse().forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'progress-session-row';
+
+    const dateSpan = document.createElement('span');
+    dateSpan.className = 'progress-session-date';
+    dateSpan.textContent = new Date(p.date).toLocaleDateString(undefined, { month:'short', day:'numeric' });
+
+    const volSpan = document.createElement('span');
+    volSpan.className = 'progress-session-volume';
+    volSpan.textContent = Math.round(p.volume) + ' ' + getWeightUnit();
+
+    const badge = document.createElement('span');
+    if(p.status){
+      badge.className = 'progress-session-badge ' + p.status;
+      badge.textContent = p.status === 'improved' ? '↑ Improved' : p.status === 'declined' ? '↓ Declined' : '→ Stable';
+    } else {
+      badge.className = 'progress-session-badge';
+      badge.textContent = 'First';
+    }
+
+    row.appendChild(dateSpan); row.appendChild(volSpan); row.appendChild(badge);
+    container.appendChild(row);
+  });
+}
+
+const progressExerciseSelect = document.getElementById('progressExerciseSelect');
+const progressChartWrap = document.getElementById('progressChartWrap');
+const progressLegend = document.getElementById('progressLegend');
+const progressSummary = document.getElementById('progressSummary');
+const progressSessionList = document.getElementById('progressSessionList');
+
+function renderProgressForExercise(name){
+  const points = getExerciseTrend(name);
+  progressChartWrap.innerHTML = renderProgressChartSvg(points);
+  progressSummary.innerHTML = renderProgressSummaryHtml(points);
+  renderProgressSessionList(points, progressSessionList);
+}
+
+function renderProgress(){
+  const trendable = getTrendableExercises();
+  const prevSelected = progressExerciseSelect.value;
+
+  if(trendable.length === 0){
+    progressExerciseSelect.style.display = 'none';
+    progressLegend.style.display = 'none';
+    progressChartWrap.innerHTML = '<div class="progress-empty">Log the same exercise at least twice to see a progress trend here.</div>';
+    progressSummary.innerHTML = '';
+    progressSessionList.innerHTML = '';
+    return;
+  }
+
+  progressExerciseSelect.style.display = 'block';
+  progressLegend.style.display = 'flex';
+  progressExerciseSelect.innerHTML = '';
+  trendable.forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name; opt.textContent = name;
+    progressExerciseSelect.appendChild(opt);
+  });
+
+  const selected = trendable.includes(prevSelected) ? prevSelected : trendable[0];
+  progressExerciseSelect.value = selected;
+  renderProgressForExercise(selected);
+}
+progressExerciseSelect.addEventListener('change', (e) => renderProgressForExercise(e.target.value));
 
 // ---------- Google sign-in + Sheets API sync ----------
 const settingsToggle = document.getElementById('settingsToggle');
@@ -1522,6 +1701,7 @@ async function restoreFromSheet(){
     restored.forEach(entry => entry.exercises.forEach(ex => rememberExercise(ex.name, ex.muscle)));
     renderHistory();
     renderCalendar();
+    renderProgress();
   }
   return restored.length;
 }
@@ -1605,6 +1785,7 @@ saveHistory();
 if(current.exercises.length === 0){ addExercise(false); } else { renderExercises(); }
 renderHistory();
 renderCalendar();
+renderProgress();
 updateAuthUI();
 flushStalePendingDeletes(); // clean up anything left over from a session that closed early
 
