@@ -2045,10 +2045,6 @@ async function syncAll(showAlerts){
     return;
   }
   const pending = history.filter(h => !h.synced);
-  if(pending.length === 0){
-    if(showAlerts) setSyncStatus('ok', 'Already up to date.');
-    return;
-  }
   try{
     const token = await getValidToken();
     if(!spreadsheetId) await ensureSpreadsheet();
@@ -2057,17 +2053,21 @@ async function syncAll(showAlerts){
       try{ await resyncEntryToSheet(token, entry); entry.synced = true; }
       catch(e){ failed++; }
     }
-    saveHistory();
-    renderHistory();
+    if(pending.length){
+      saveHistory();
+      renderHistory();
+    }
 
     // Best-effort: rebuild the weekly/monthly summary tabs from current
-    // history. Failure here shouldn't fail the whole sync — the individual
-    // workouts above already synced fine, and the next sync retries this.
+    // history. Runs even when every workout was already synced, since the
+    // attendance tabs can still be stale (or not created yet). Failure here
+    // shouldn't fail the whole sync — the workouts above already synced
+    // fine, and the next sync retries this.
     try{ await syncAttendanceSheets(token); } catch(e){ /* retried next sync */ }
 
     refreshSyncBadge();
     if(showAlerts){
-      if(failed === 0) setSyncStatus('ok', 'Synced successfully.');
+      if(failed === 0) setSyncStatus('ok', pending.length ? 'Synced successfully.' : 'Already up to date.');
       else setSyncStatus('err', `${failed} entr${failed===1?'y':'ies'} failed to sync.`);
     }
   } catch(err){
