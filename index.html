@@ -64,6 +64,8 @@
     font-weight:800; margin:0; color:var(--text);
   }
   header .dot{color:var(--green); padding:0 1px;}
+  .brand-greeting{font-size:11px; color:var(--muted); margin-top:2px; display:none;}
+  .brand-greeting.show{display:block;}
   .gear-btn{
     background:none; border:none; color:var(--text); font-size:22px;
     padding:10px 12px; line-height:1; margin:-10px -12px -10px 0;
@@ -433,12 +435,23 @@
 <header>
   <div class="brand">
     <img src="icons/icon-192.png" alt="" class="brand-logo">
-    <h1>Gym<span class="dot">•</span>Log</h1>
+    <div>
+      <h1>Gym<span class="dot">•</span>Log</h1>
+      <div class="brand-greeting" id="brandGreeting"></div>
+    </div>
   </div>
   <button class="gear-btn" id="settingsToggle" aria-label="Settings">⚙</button>
 </header>
 
 <div class="settings-panel" id="settingsPanel">
+  <div class="settings-hint" id="nameWelcomeHint" style="display:none;">👋 Welcome! What should we call you?</div>
+  <label>Your Name</label>
+  <input type="text" id="displayNameInput" placeholder="Your name" autocomplete="off" spellcheck="false">
+  <div class="settings-row">
+    <button class="btn-primary" id="displayNameSave">Save Name</button>
+  </div>
+  <hr class="settings-divider">
+
   <div id="signedOutBlock">
     <details class="setup-details" id="setupDetails">
       <summary>First-time setup (one-time, developer step)</summary>

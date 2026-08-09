@@ -5,6 +5,7 @@ const K_TIMER = 'gymlog_timer';
 const K_CLIENT_ID = 'gymlog_client_id';
 const K_WEIGHT_UNIT = 'gymlog_weight_unit';
 const K_LAST_EMAIL = 'gymlog_last_email';
+const K_DISPLAY_NAME = 'gymlog_display_name';
 const K_PENDING_DELETES = 'gymlog_pending_deletes';
 const K_EXERCISE_DICT = 'gymlog_exercise_dict';
 function sheetIdKey(email){ return 'gymlog_sheet_id_' + email; }
@@ -37,6 +38,7 @@ function loadExerciseDict(){
 function saveExerciseDict(list){ localStorage.setItem(K_EXERCISE_DICT, JSON.stringify(list)); }
 function uid(){ return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2,10)); }
 function getWeightUnit(){ return localStorage.getItem(K_WEIGHT_UNIT) || 'kg'; }
+function getDisplayName(){ return (localStorage.getItem(K_DISPLAY_NAME) || '').trim(); }
 
 // Strip any HTML-ish characters from free-text before it goes into the sheet or DOM.
 function sanitizeText(str){ return String(str == null ? '' : str).replace(/[<>]/g, '').slice(0, 200); }
@@ -1368,6 +1370,10 @@ attendanceTabs.addEventListener('click', (e) => {
 // ---------- Google sign-in + Sheets API sync ----------
 const settingsToggle = document.getElementById('settingsToggle');
 const settingsPanel = document.getElementById('settingsPanel');
+const brandGreeting = document.getElementById('brandGreeting');
+const nameWelcomeHint = document.getElementById('nameWelcomeHint');
+const displayNameInput = document.getElementById('displayNameInput');
+const displayNameSave = document.getElementById('displayNameSave');
 const signedOutBlock = document.getElementById('signedOutBlock');
 const signedInBlock = document.getElementById('signedInBlock');
 const clientIdInput = document.getElementById('clientIdInput');
@@ -1500,6 +1506,30 @@ signOutBtn.addEventListener('click', () => {
 unitKgBtn.addEventListener('click', () => { localStorage.setItem(K_WEIGHT_UNIT, 'kg'); updateAuthUI(); renderExercises(); });
 unitLbBtn.addEventListener('click', () => { localStorage.setItem(K_WEIGHT_UNIT, 'lb'); updateAuthUI(); renderExercises(); });
 
+// ---------- Display name (local, with best-effort sync to the Sheet) ----------
+function renderBrandGreeting(){
+  const name = getDisplayName();
+  if(name){
+    brandGreeting.textContent = `Hi, ${name}`;
+    brandGreeting.classList.add('show');
+  } else {
+    brandGreeting.textContent = '';
+    brandGreeting.classList.remove('show');
+  }
+  nameWelcomeHint.style.display = name ? 'none' : 'block';
+}
+displayNameInput.value = getDisplayName();
+renderBrandGreeting();
+if(!getDisplayName()) settingsPanel.classList.add('open'); // ask once, first time only
+
+displayNameSave.addEventListener('click', () => {
+  const name = displayNameInput.value.trim();
+  if(!name){ alert('Enter your name first.'); return; }
+  localStorage.setItem(K_DISPLAY_NAME, name);
+  renderBrandGreeting();
+  if(userEmail && accessToken) syncDisplayNameToSheet(accessToken).catch(() => {});
+});
+
 settingsToggle.addEventListener('click', () => {
   settingsPanel.classList.toggle('open');
 });
@@ -1515,6 +1545,22 @@ async function afterSignIn(){
     updateAuthUI();
     setSyncStatus('ok', 'Signed in. Preparing your Google Sheet…');
     await ensureSpreadsheet();
+
+    // Adopt a display name automatically the first time this device signs
+    // in: prefer whatever name is already saved in the Sheet (set from
+    // another device), falling back to the Google account's own name.
+    // Never overwrites a name already entered locally.
+    if(!getDisplayName()){
+      const sheetName = await readDisplayNameFromSheet(accessToken).catch(() => null);
+      const fallbackName = sheetName || info.name || '';
+      if(fallbackName){
+        localStorage.setItem(K_DISPLAY_NAME, fallbackName);
+        displayNameInput.value = fallbackName;
+        renderBrandGreeting();
+      }
+    } else {
+      syncDisplayNameToSheet(accessToken).catch(() => {});
+    }
     updateAuthUI();
 
     const hasRemoteTabs = sheetMetaCache && Object.keys(sheetMetaCache).some(t => t !== 'Overview');
@@ -1628,6 +1674,28 @@ async function createSpreadsheet(token){
   created.sheets.forEach(s => { sheetMetaCache[s.properties.title] = s.properties.sheetId; });
 
   return id;
+}
+
+// Overview!A4:B4 holds ['Name', <display name>] — kept separate from the
+// A1/A2 intro text above so it's easy to spot and edit by hand in the Sheet.
+async function readDisplayNameFromSheet(token){
+  if(!spreadsheetId) return null;
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Overview!B4`,
+    { headers:{ Authorization:'Bearer '+token } }
+  );
+  if(!res.ok) return null;
+  const data = await res.json();
+  return (data.values && data.values[0] && data.values[0][0]) || null;
+}
+async function syncDisplayNameToSheet(token){
+  if(!spreadsheetId) return;
+  const name = getDisplayName();
+  if(!name) return;
+  await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Overview!A4:B4?valueInputOption=USER_ENTERED`,
+    { method:'PUT', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values:[['Name', name]] }) }
+  );
 }
 
 const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -1891,7 +1959,19 @@ async function restoreFromSheet(){
 
   (data.sheets || []).forEach(sheet => {
     const title = sheet.properties.title;
-    if(title === 'Overview') return;
+    if(title === 'Overview'){
+      if(!getDisplayName()){
+        const rowData = (sheet.data && sheet.data[0] && sheet.data[0].rowData) || [];
+        const nameCell = rowData[3] && rowData[3].values && rowData[3].values[1];
+        const sheetName = nameCell && nameCell.formattedValue;
+        if(sheetName){
+          localStorage.setItem(K_DISPLAY_NAME, sheetName);
+          displayNameInput.value = sheetName;
+          renderBrandGreeting();
+        }
+      }
+      return;
+    }
     const dateParts = parseSheetTitleToDateParts(title);
     if(!dateParts) return;
 
@@ -2064,6 +2144,7 @@ async function syncAll(showAlerts){
     // shouldn't fail the whole sync — the workouts above already synced
     // fine, and the next sync retries this.
     try{ await syncAttendanceSheets(token); } catch(e){ /* retried next sync */ }
+    try{ await syncDisplayNameToSheet(token); } catch(e){ /* retried next sync */ }
 
     refreshSyncBadge();
     if(showAlerts){
