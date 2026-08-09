@@ -98,6 +98,7 @@ timerSaveBtn.addEventListener('click', () => {
   renderHistory();
   renderCalendar();
   renderProgress();
+  renderAttendance();
   refreshSyncBadge();
 });
 
@@ -383,6 +384,7 @@ saveWorkoutBtn.addEventListener('click', () => {
   renderHistory();
   renderCalendar();
   renderProgress();
+  renderAttendance();
   refreshSyncBadge();
 });
 
@@ -641,6 +643,7 @@ function renderEditForm(container, entry){
     renderHistory();
     renderCalendar();
     renderProgress();
+    renderAttendance();
   });
   cancelBtn.addEventListener('click', () => { editingEntryId = null; renderHistory(); });
 
@@ -698,7 +701,7 @@ function deleteWorkout(entry){
   pending.push(entry);
   savePendingDeletes(pending);
 
-  renderHistory(); renderCalendar(); renderProgress();
+  renderHistory(); renderCalendar(); renderProgress(); renderAttendance();
 
   pendingDelete = { entry, index };
   showToast('Workout deleted', 'Undo', undoDelete);
@@ -711,7 +714,7 @@ function undoDelete(){
   history.splice(pendingDelete.index, 0, pendingDelete.entry);
   saveHistory();
   savePendingDeletes(loadPendingDeletes().filter(e => e.id !== pendingDelete.entry.id));
-  renderHistory(); renderCalendar(); renderProgress();
+  renderHistory(); renderCalendar(); renderProgress(); renderAttendance();
   pendingDelete = null;
   hideToast();
 }
@@ -1115,6 +1118,252 @@ function renderProgress(){
   renderProgressForExercise(selected);
 }
 progressExerciseSelect.addEventListener('change', (e) => renderProgressForExercise(e.target.value));
+
+// ---------- Attendance (weekly & monthly load + attendance tracking) ----------
+// Deliberately independent of the per-exercise Progress feature above: its
+// own data aggregation, its own charts, its own Sheet tabs, its own trend
+// classification. Progress answers "am I getting stronger at this exercise";
+// this answers "how consistently am I showing up, and how much total work
+// am I doing, week to week / month to month" — different questions, so nothing
+// here reads or writes Progress's state, and vice versa. It reuses only the
+// shared TREND_COLOR / CHART_INK style palette and computeSetVolume (pure
+// arithmetic, not feature state) so the visual language stays consistent.
+
+function totalLoadForEntry(entry){
+  return entry.exercises.reduce((sum, ex) => sum + computeSetVolume(ex.sets), 0);
+}
+
+// Sunday-start week boundary — matches the calendar's own S M T W T F S layout.
+function weekStartOf(date){
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - d.getDay());
+  return d;
+}
+function weekEndOf(weekStart){
+  const d = new Date(weekStart);
+  d.setDate(d.getDate() + 6);
+  return d;
+}
+function weekRangeLabel(weekStart){
+  const end = weekEndOf(weekStart);
+  const fmt = (dt) => dt.toLocaleDateString(undefined, { month:'short', day:'numeric' });
+  return `${fmt(weekStart)} – ${fmt(end)}`;
+}
+
+function monthStartOf(date){
+  const d = new Date(date);
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+function monthLabel(monthStart){
+  return monthStart.toLocaleDateString(undefined, { month:'short', year:'numeric' });
+}
+function daysInMonth(monthStart){
+  return new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0).getDate();
+}
+
+function getWeeklyAggregates(){
+  const map = new Map();
+  history.forEach(entry => {
+    const ws = weekStartOf(entry.date);
+    const key = dateKey(ws);
+    if(!map.has(key)) map.set(key, { periodStart: ws, days: new Set(), load: 0 });
+    const agg = map.get(key);
+    agg.days.add(dateKey(new Date(entry.date)));
+    agg.load += totalLoadForEntry(entry);
+  });
+  return [...map.values()]
+    .map(agg => ({
+      periodStart: agg.periodStart,
+      label: weekRangeLabel(agg.periodStart),
+      attendance: agg.days.size,
+      possibleDays: 7,
+      load: agg.load
+    }))
+    .sort((a, b) => a.periodStart - b.periodStart);
+}
+
+function getMonthlyAggregates(){
+  const map = new Map();
+  history.forEach(entry => {
+    const ms = monthStartOf(entry.date);
+    const key = dateKey(ms);
+    if(!map.has(key)) map.set(key, { periodStart: ms, days: new Set(), load: 0 });
+    const agg = map.get(key);
+    agg.days.add(dateKey(new Date(entry.date)));
+    agg.load += totalLoadForEntry(entry);
+  });
+  return [...map.values()]
+    .map(agg => ({
+      periodStart: agg.periodStart,
+      label: monthLabel(agg.periodStart),
+      attendance: agg.days.size,
+      possibleDays: daysInMonth(agg.periodStart),
+      load: agg.load
+    }))
+    .sort((a, b) => a.periodStart - b.periodStart);
+}
+
+// Load compares by percent change (same ±2% "stable" band as Progress, for a
+// consistent meaning of "stable" app-wide) — attendance compares by plain
+// day-count delta, since "2% more days" isn't a meaningful idea at this scale.
+function attachLoadTrend(points){
+  return points.map((p, i) => {
+    if(i === 0) return { ...p, loadStatus:null, loadDiffPct:null };
+    const prev = points[i - 1];
+    const diffPct = prev.load === 0 ? (p.load > 0 ? 100 : 0) : ((p.load - prev.load) / prev.load) * 100;
+    const loadStatus = Math.abs(diffPct) < 2 ? 'stable' : (diffPct > 0 ? 'improved' : 'declined');
+    return { ...p, loadStatus, loadDiffPct: diffPct };
+  });
+}
+function attachAttendanceTrend(points){
+  return points.map((p, i) => {
+    if(i === 0) return { ...p, attStatus:null };
+    const prev = points[i - 1];
+    const attStatus = p.attendance > prev.attendance ? 'improved' : p.attendance === prev.attendance ? 'stable' : 'declined';
+    return { ...p, attStatus };
+  });
+}
+
+function renderLoadLineSvg(points){
+  const W = 320, H = 150, padL = 34, padR = 14, padT = 14, padB = 24;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const values = points.map(p => p.load);
+  const minV = Math.min(0, ...values);
+  const niceMax = Math.ceil(Math.max(...values, 1) / 100) * 100;
+  const xFor = i => points.length === 1 ? padL + plotW / 2 : padL + (i / (points.length - 1)) * plotW;
+  const yFor = v => padT + plotH - ((v - minV) / ((niceMax - minV) || 1)) * plotH;
+
+  let svg = '';
+  for(let s = 0; s <= 3; s++){
+    const v = minV + (niceMax - minV) * (s / 3), y = yFor(v);
+    svg += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="${CHART_INK.line}" stroke-width="1"/>`;
+    svg += `<text x="${padL - 6}" y="${y + 3}" text-anchor="end" font-size="9" fill="${CHART_INK.muted}" font-family="ui-monospace,monospace">${Math.round(v)}</text>`;
+  }
+  for(let i = 1; i < points.length; i++){
+    const x1 = xFor(i - 1), y1 = yFor(points[i - 1].load), x2 = xFor(i), y2 = yFor(points[i].load);
+    svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${TREND_COLOR[points[i].loadStatus] || TREND_COLOR.none}" stroke-width="2" stroke-linecap="round"/>`;
+  }
+  points.forEach((p, i) => {
+    const x = xFor(i), y = yFor(p.load), color = TREND_COLOR[p.loadStatus] || TREND_COLOR.none;
+    svg += `<circle cx="${x}" cy="${y}" r="5" fill="${color}" stroke="${CHART_INK.ring}" stroke-width="2"/>`;
+  });
+  const last = points[points.length - 1];
+  const lx = xFor(points.length - 1), ly = yFor(last.load);
+  const above = ly > padT + 14;
+  svg += `<text x="${lx}" y="${above ? ly - 10 : ly + 18}" text-anchor="middle" font-size="11" font-weight="700" fill="${CHART_INK.text}" font-family="ui-monospace,monospace">${Math.round(last.load)}</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" class="attendance-chart" role="img" aria-label="Total load trend">${svg}</svg>`;
+}
+
+function renderAttendanceBarSvg(points){
+  const W = 320, H = 130, padL = 24, padR = 14, padT = 16, padB = 22;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const maxPossible = Math.max(...points.map(p => p.possibleDays));
+  const barSlot = plotW / points.length;
+  const barW = Math.min(22, barSlot * 0.55);
+  const baseY = padT + plotH;
+  const yFor = v => padT + plotH - (v / maxPossible) * plotH;
+
+  let svg = '';
+  const topY = yFor(maxPossible);
+  svg += `<line x1="${padL}" y1="${topY}" x2="${W - padR}" y2="${topY}" stroke="${CHART_INK.line}" stroke-width="1" stroke-dasharray="2,3"/>`;
+  svg += `<text x="${padL}" y="${topY - 4}" font-size="9" fill="${CHART_INK.muted}" font-family="ui-monospace,monospace">${maxPossible}</text>`;
+  svg += `<line x1="${padL}" y1="${baseY}" x2="${W - padR}" y2="${baseY}" stroke="${CHART_INK.line}" stroke-width="1"/>`;
+
+  points.forEach((p, i) => {
+    const cx = padL + barSlot * i + barSlot / 2;
+    const barY = yFor(p.attendance);
+    const barH = Math.max(baseY - barY, 1);
+    const color = TREND_COLOR[p.attStatus] || TREND_COLOR.none;
+    svg += `<rect x="${cx - barW / 2}" y="${barY}" width="${barW}" height="${barH}" rx="4" fill="${color}"/>`;
+    svg += `<text x="${cx}" y="${barY - 5}" text-anchor="middle" font-size="10" font-weight="700" fill="${CHART_INK.text}" font-family="ui-monospace,monospace">${p.attendance}</text>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" class="attendance-chart" role="img" aria-label="Days attended per period">${svg}</svg>`;
+}
+
+const attendanceTabs = document.getElementById('attendanceTabs');
+const attendanceLoadChartWrap = document.getElementById('attendanceLoadChartWrap');
+const attendanceDaysChartWrap = document.getElementById('attendanceDaysChartWrap');
+const attendanceSummary = document.getElementById('attendanceSummary');
+const attendanceList = document.getElementById('attendanceList');
+
+let attendancePeriod = 'week';
+
+function renderAttendance(){
+  const raw = attendancePeriod === 'week' ? getWeeklyAggregates() : getMonthlyAggregates();
+
+  if(raw.length === 0){
+    attendanceLoadChartWrap.innerHTML = '<div class="attendance-empty">Log a workout to start tracking attendance and load.</div>';
+    attendanceDaysChartWrap.innerHTML = '';
+    attendanceSummary.innerHTML = '';
+    attendanceList.innerHTML = '';
+    return;
+  }
+
+  const points = attachAttendanceTrend(attachLoadTrend(raw));
+  attendanceLoadChartWrap.innerHTML = renderLoadLineSvg(points);
+  attendanceDaysChartWrap.innerHTML = renderAttendanceBarSvg(points);
+
+  const last = points[points.length - 1];
+  const unit = getWeightUnit();
+  const periodWord = attendancePeriod === 'week' ? 'week' : 'month';
+  let summaryHtml;
+  if(!last.loadStatus){
+    summaryHtml = `First ${periodWord} logged — ${last.attendance}/${last.possibleDays} days, ${Math.round(last.load)} ${unit} total load.`;
+  } else {
+    const loadCls = last.loadStatus === 'improved' ? 'trend-up' : last.loadStatus === 'declined' ? 'trend-down' : 'trend-flat';
+    const loadArrow = last.loadStatus === 'improved' ? '↑' : last.loadStatus === 'declined' ? '↓' : '→';
+    const loadPct = Math.abs(Math.round(last.loadDiffPct));
+    const loadWords = last.loadStatus === 'stable'
+      ? `about the same load as last ${periodWord}`
+      : `${last.loadStatus === 'improved' ? 'up' : 'down'} ${loadPct}% load vs last ${periodWord}`;
+    const attWords = last.attStatus === 'improved' ? 'up on attendance' : last.attStatus === 'declined' ? 'down on attendance' : 'same attendance';
+    summaryHtml = `<span class="${loadCls}">${loadArrow}</span> ${loadWords} · ${attWords} (${last.attendance}/${last.possibleDays} days)`;
+  }
+  attendanceSummary.innerHTML = summaryHtml;
+
+  attendanceList.innerHTML = '';
+  [...points].reverse().forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'attendance-row';
+
+    const top = document.createElement('div');
+    top.className = 'attendance-row-top';
+    const periodSpan = document.createElement('span');
+    periodSpan.className = 'attendance-period';
+    periodSpan.textContent = p.label;
+    const daysBadge = document.createElement('span');
+    daysBadge.className = 'attendance-days-badge' + (p.attStatus ? ' ' + p.attStatus : '');
+    daysBadge.textContent = `${p.attendance}/${p.possibleDays} days`;
+    top.appendChild(periodSpan); top.appendChild(daysBadge);
+
+    const bottom = document.createElement('div');
+    bottom.className = 'attendance-row-bottom';
+    const loadSpan = document.createElement('span');
+    loadSpan.className = 'attendance-load-value';
+    loadSpan.textContent = Math.round(p.load) + ' ' + unit + ' load';
+    const loadBadge = document.createElement('span');
+    if(p.loadStatus){
+      loadBadge.className = 'progress-session-badge ' + p.loadStatus;
+      loadBadge.textContent = p.loadStatus === 'improved' ? '↑ Improved' : p.loadStatus === 'declined' ? '↓ Declined' : '→ Stable';
+    } else {
+      loadBadge.className = 'progress-session-badge';
+      loadBadge.textContent = 'First';
+    }
+    bottom.appendChild(loadSpan); bottom.appendChild(loadBadge);
+
+    row.appendChild(top); row.appendChild(bottom);
+    attendanceList.appendChild(row);
+  });
+}
+
+attendanceTabs.addEventListener('click', (e) => {
+  const btn = e.target.closest('.attendance-tab');
+  if(!btn) return;
+  attendancePeriod = btn.dataset.period;
+  [...attendanceTabs.children].forEach(b => b.classList.toggle('active', b === btn));
+  renderAttendance();
+});
 
 // ---------- Google sign-in + Sheets API sync ----------
 const settingsToggle = document.getElementById('settingsToggle');
@@ -1702,8 +1951,87 @@ async function restoreFromSheet(){
     renderHistory();
     renderCalendar();
     renderProgress();
+    renderAttendance();
   }
   return restored.length;
+}
+
+// ---------- Attendance Sheets sync (Weekly Progress / Monthly Progress tabs) ----------
+// These are full-rebuild summary tabs, unlike the per-date exercise tabs:
+// every sync clears and rewrites the whole table from local history, since
+// they're recomputed aggregates rather than an append-only log. No row
+// tagging or delete-by-marker is needed here — a full overwrite is simpler
+// and just as safe for a tab that's entirely derived data.
+async function ensureAggregateSheet(token, title, headers){
+  if(!sheetMetaCache) await loadSheetMeta(token);
+  if(sheetMetaCache[title] != null) return sheetMetaCache[title];
+
+  const addRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+    method:'POST',
+    headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
+    body: JSON.stringify({ requests:[ { addSheet:{ properties:{ title, gridProperties:{ frozenRowCount:1 } } } } ] })
+  });
+  if(!addRes.ok) throw new Error('Failed to create tab "' + title + '" (' + addRes.status + ')');
+  const added = await addRes.json();
+  const sheetId = added.replies[0].addSheet.properties.sheetId;
+
+  const endCol = String.fromCharCode(65 + headers.length - 1);
+  const headerRange = `'${title}'!A1:${endCol}1`;
+  const headerRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(headerRange)}?valueInputOption=USER_ENTERED`,
+    { method:'PUT', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values:[headers] }) }
+  );
+  if(!headerRes.ok) throw new Error('Failed to write header for "' + title + '" (' + headerRes.status + ')');
+
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+    method:'POST',
+    headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
+    body: JSON.stringify({ requests:[ {
+      repeatCell:{
+        range:{ sheetId, startRowIndex:0, endRowIndex:1 },
+        cell:{ userEnteredFormat:{ textFormat:{ bold:true } } },
+        fields:'userEnteredFormat.textFormat.bold'
+      }
+    } ] })
+  });
+
+  if(!sheetMetaCache) sheetMetaCache = {};
+  sheetMetaCache[title] = sheetId;
+  return sheetId;
+}
+
+async function overwriteAggregateSheet(token, title, rows, colCount){
+  const endCol = String.fromCharCode(65 + colCount - 1);
+  const clearRange = `'${title}'!A2:${endCol}5000`;
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(clearRange)}:clear`, {
+    method:'POST', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }
+  });
+  if(rows.length === 0) return;
+  const writeRange = `'${title}'!A2:${endCol}${rows.length + 1}`;
+  const writeRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(writeRange)}?valueInputOption=USER_ENTERED`,
+    { method:'PUT', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values: rows }) }
+  );
+  if(!writeRes.ok) throw new Error('Failed to write "' + title + '" (' + writeRes.status + ')');
+}
+
+function sheetDateStr(date){
+  const y = date.getFullYear(), m = String(date.getMonth() + 1).padStart(2, '0'), d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+async function syncAttendanceSheets(token){
+  const weekly = getWeeklyAggregates();
+  await ensureAggregateSheet(token, 'Weekly Progress', ['Week Start', 'Week End', 'Days Attended', 'Total Load']);
+  const weeklyRows = weekly.map(w => [
+    sheetDateStr(w.periodStart), sheetDateStr(weekEndOf(w.periodStart)), w.attendance, Math.round(w.load)
+  ]);
+  await overwriteAggregateSheet(token, 'Weekly Progress', weeklyRows, 4);
+
+  const monthly = getMonthlyAggregates();
+  await ensureAggregateSheet(token, 'Monthly Progress', ['Month', 'Days Attended', 'Total Load']);
+  const monthlyRows = monthly.map(m => [ monthLabel(m.periodStart), m.attendance, Math.round(m.load) ]);
+  await overwriteAggregateSheet(token, 'Monthly Progress', monthlyRows, 3);
 }
 
 async function syncAll(showAlerts){
@@ -1731,6 +2059,12 @@ async function syncAll(showAlerts){
     }
     saveHistory();
     renderHistory();
+
+    // Best-effort: rebuild the weekly/monthly summary tabs from current
+    // history. Failure here shouldn't fail the whole sync — the individual
+    // workouts above already synced fine, and the next sync retries this.
+    try{ await syncAttendanceSheets(token); } catch(e){ /* retried next sync */ }
+
     refreshSyncBadge();
     if(showAlerts){
       if(failed === 0) setSyncStatus('ok', 'Synced successfully.');
@@ -1786,6 +2120,7 @@ if(current.exercises.length === 0){ addExercise(false); } else { renderExercises
 renderHistory();
 renderCalendar();
 renderProgress();
+renderAttendance();
 updateAuthUI();
 flushStalePendingDeletes(); // clean up anything left over from a session that closed early
 

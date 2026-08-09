@@ -345,6 +345,40 @@
   .progress-session-badge.stable{ color:var(--blue); background:rgba(77,168,255,0.14); }
   .progress-session-badge.declined{ color:#ff6b6b; background:rgba(255,107,107,0.14); }
 
+  /* Attendance (weekly/monthly load + attendance — independent of the
+     per-exercise Progress feature above: separate data, separate charts) */
+  .attendance-card{ background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px; }
+  .attendance-tabs{ display:flex; gap:8px; margin-bottom:14px; }
+  .attendance-tab{
+    flex:1; background:var(--panel-2); border:1px solid var(--line); color:var(--muted);
+    font-size:13px; font-weight:700; padding:9px; border-radius:8px;
+  }
+  .attendance-tab.active{ background:var(--blue); color:#04121f; border-color:var(--blue); }
+  .attendance-subtitle{
+    font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:var(--muted);
+    font-weight:700; margin:14px 0 6px 2px;
+  }
+  .attendance-subtitle:first-of-type{ margin-top:0; }
+  .attendance-chart{ width:100%; height:auto; display:block; }
+  .attendance-empty{ color:var(--muted); font-size:13px; text-align:center; padding:20px 10px; }
+
+  .attendance-list{ margin-top:10px; border-top:1px solid var(--line); padding-top:4px; }
+  .attendance-row{ padding:10px 2px; border-bottom:1px solid var(--line); }
+  .attendance-row:last-child{ border-bottom:none; }
+  .attendance-row-top, .attendance-row-bottom{
+    display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:13px;
+  }
+  .attendance-row-top{ margin-bottom:4px; }
+  .attendance-period{ color:var(--text); font-weight:700; }
+  .attendance-days-badge{
+    font-family:var(--mono); font-size:12px; font-weight:700; padding:2px 7px; border-radius:5px;
+    color:var(--muted); background:var(--panel-2);
+  }
+  .attendance-days-badge.improved{ color:var(--green); background:rgba(95,216,143,0.14); }
+  .attendance-days-badge.stable{ color:var(--blue); background:rgba(77,168,255,0.14); }
+  .attendance-days-badge.declined{ color:#ff6b6b; background:rgba(255,107,107,0.14); }
+  .attendance-load-value{ font-family:var(--mono); color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
+
   /* History */
   .history-item{background:var(--panel); border:1px solid var(--line); border-radius:12px; margin-bottom:10px; overflow:hidden;}
   .history-head{padding:12px 14px; display:flex; justify-content:space-between; align-items:center; cursor:pointer;}
@@ -511,6 +545,30 @@
     </div>
     <div id="progressSummary" class="progress-summary"></div>
     <div id="progressSessionList" class="progress-session-list"></div>
+  </div>
+</section>
+
+<section>
+  <div class="section-title">Attendance</div>
+  <div class="attendance-card">
+    <div class="attendance-tabs" id="attendanceTabs">
+      <button class="attendance-tab active" data-period="week" type="button">Weekly</button>
+      <button class="attendance-tab" data-period="month" type="button">Monthly</button>
+    </div>
+
+    <div class="attendance-subtitle">Total load</div>
+    <div id="attendanceLoadChartWrap"></div>
+
+    <div class="attendance-subtitle">Days attended</div>
+    <div id="attendanceDaysChartWrap"></div>
+
+    <div class="progress-legend">
+      <span><span class="legend-dot-status improved"></span> Improved</span>
+      <span><span class="legend-dot-status stable"></span> Stable</span>
+      <span><span class="legend-dot-status declined"></span> Declined</span>
+    </div>
+    <div id="attendanceSummary" class="progress-summary"></div>
+    <div id="attendanceList" class="attendance-list"></div>
   </div>
 </section>
 
