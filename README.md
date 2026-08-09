@@ -832,6 +832,7 @@ For normal personal use, no dedicated server is required.
 **Mohammad Mujahid Nadeem**
 
 Built as a personal strength-training tracker focused on simplicity, privacy, offline usability, and user-owned data.
+
 Gym Log was originally created by **Mohammad Mujahid Nadeem**.
 
 This project is licensed under the MIT License. If you copy, modify, or
