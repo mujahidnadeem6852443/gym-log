@@ -370,6 +370,11 @@ function prevSetInWorkout(exercises, exIdx, idx){
 }
 
 function startSetTimer(exercises, exIdx, idx){
+  // Only one set can ever be running at a time — force-stop anything else
+  // first so state never becomes ambiguous about which set is "current."
+  exercises.forEach((otherEx, oExIdx) => otherEx.sets.forEach((otherSet, oIdx) => {
+    if(otherSet.timerRunning && !(oExIdx === exIdx && oIdx === idx)) stopSetTimer(exercises, oExIdx, oIdx);
+  }));
   const set = exercises[exIdx].sets[idx];
   const prev = prevSetInWorkout(exercises, exIdx, idx);
   if(prev && prev.endedAt != null && set.restBeforeMs == null){
@@ -405,6 +410,23 @@ function findRestingTarget(exercises){
     return { exIdx: next.exIdx, idx: next.idx, since: lastEnded.set.endedAt };
   }
   return null;
+}
+
+// The one previously-timed-and-stopped set (if any) that's still allowed to
+// show a "Resume" button — the single most recently ended one, and only
+// when nothing else is currently running. Every other already-timed set is
+// finished business: it shows its finalized time as plain read-only text,
+// with no button, so it can never be accidentally resumed after you've
+// moved on to a later set or exercise.
+function findResumableTarget(exercises){
+  const flat = [];
+  exercises.forEach((ex, exIdx) => ex.sets.forEach((set, idx) => flat.push({ exIdx, idx, set })));
+  if(flat.some(f => f.set.timerRunning)) return null;
+  let best = null;
+  flat.forEach(f => {
+    if(f.set.setDurationMs && f.set.endedAt != null && (!best || f.set.endedAt > best.set.endedAt)) best = f;
+  });
+  return best ? { exIdx: best.exIdx, idx: best.idx } : null;
 }
 // Only meaningful once at least one set has timing data — an exercise
 // nobody used the timer on returns null so callers can skip the summary
@@ -475,7 +497,7 @@ function inputMode(input){ input.setAttribute('inputmode','decimal'); input.setA
 // tracking needs to look at the previous set even when that's in a
 // different exercise.
 function buildSetRow(exercises, exIdx, idx, card, opts){
-  const { unit, showTimer, onMutate, onRerender, onRemoveSet, restingTarget } = opts;
+  const { unit, showTimer, onMutate, onRerender, onRemoveSet, restingTarget, resumableTarget } = opts;
   const ex = exercises[exIdx];
   const set = ex.sets[idx];
 
@@ -522,22 +544,36 @@ function buildSetRow(exercises, exIdx, idx, card, opts){
   tools.appendChild(dropBtn);
 
   if(showTimer){
-    const timerBtn = document.createElement('button');
-    timerBtn.type = 'button';
-    timerBtn.className = 'set-tool-btn set-timer-btn' + (set.timerRunning ? ' running' : '');
-    timerBtn.textContent = set.timerRunning ? '■ Stop' : (set.setDurationMs ? '▶ Resume' : '▶ Start Set');
-    timerBtn.addEventListener('click', () => {
-      if(set.timerRunning) stopSetTimer(exercises, exIdx, idx); else startSetTimer(exercises, exIdx, idx);
-      onMutate(); onRerender();
-    });
-    tools.appendChild(timerBtn);
+    const isResumable = resumableTarget && resumableTarget.exIdx === exIdx && resumableTarget.idx === idx;
+    // A set that's already been timed, isn't running, and is no longer the
+    // one resumable set (i.e. you've since started a different set or
+    // exercise) is finished business — no button, just its finalized time,
+    // so it can never be accidentally resumed after you've moved on.
+    const isLocked = !set.timerRunning && set.setDurationMs && !isResumable;
 
-    if(set.setDurationMs || set.timerRunning){
-      const live = document.createElement('span');
-      live.className = 'set-timer-live';
-      live.textContent = fmtShort(setElapsed(set));
-      tools.appendChild(live);
-      liveSetTimerEls.set(ex.id + ':' + idx + ':running', { type:'running', el: live, set });
+    if(isLocked){
+      const doneEl = document.createElement('span');
+      doneEl.className = 'set-timer-live set-timer-done';
+      doneEl.textContent = fmtShort(set.setDurationMs);
+      tools.appendChild(doneEl);
+    } else {
+      const timerBtn = document.createElement('button');
+      timerBtn.type = 'button';
+      timerBtn.className = 'set-tool-btn set-timer-btn' + (set.timerRunning ? ' running' : '');
+      timerBtn.textContent = set.timerRunning ? '■ Stop' : (set.setDurationMs ? '▶ Resume' : '▶ Start Set');
+      timerBtn.addEventListener('click', () => {
+        if(set.timerRunning) stopSetTimer(exercises, exIdx, idx); else startSetTimer(exercises, exIdx, idx);
+        onMutate(); onRerender();
+      });
+      tools.appendChild(timerBtn);
+
+      if(set.setDurationMs || set.timerRunning){
+        const live = document.createElement('span');
+        live.className = 'set-timer-live';
+        live.textContent = fmtShort(setElapsed(set));
+        tools.appendChild(live);
+        liveSetTimerEls.set(ex.id + ':' + idx + ':running', { type:'running', el: live, set });
+      }
     }
     if(set.restBeforeMs != null){
       const restEl = document.createElement('span');
@@ -600,6 +636,7 @@ function renderExercises(focusId){
   exerciseList.innerHTML = '';
   liveSetTimerEls.clear();
   const restingTarget = findRestingTarget(current.exercises);
+  const resumableTarget = findResumableTarget(current.exercises);
   current.exercises.forEach((ex, exIdx) => {
     const card = document.createElement('div');
     card.className = 'exercise';
@@ -670,7 +707,7 @@ function renderExercises(focusId){
 
     ex.sets.forEach((set, idx) => {
       buildSetRow(current.exercises, exIdx, idx, card, {
-        unit, showTimer: true, restingTarget,
+        unit, showTimer: true, restingTarget, resumableTarget,
         onMutate: saveCurrent,
         onRerender: renderExercises,
         onRemoveSet: (i) => removeSet(ex.id, i)
