@@ -263,12 +263,23 @@
     font-size:11px; font-weight:700; padding:5px 9px; border-radius:7px;
   }
   .set-tool-btn.active{background:var(--accent-dim); border-color:var(--accent); color:var(--blue);}
+  /* Start Set gets its own bigger, filled-blue look by default — Drop Set
+     stays the small neutral pill above so the two are never mistaken for
+     each other at a glance, even before either is toggled/running. */
+  .set-timer-btn{
+    background:var(--accent-dim); border:1px solid var(--accent); color:var(--blue);
+    font-size:12px; font-weight:800; padding:7px 12px; border-radius:8px;
+  }
   .set-timer-btn.running{background:var(--green-dim); border-color:var(--green); color:var(--green);}
   .set-timer-live{
     font-family:var(--mono); font-size:12px; font-weight:700; color:var(--text);
     background:var(--panel-2); border:1px solid var(--line); border-radius:7px; padding:5px 8px;
   }
   .set-rest-readout{font-family:var(--mono); font-size:12px; color:var(--muted); padding:5px 2px;}
+  .set-rest-live{
+    font-family:var(--mono); font-size:12px; font-weight:700; color:#e6b34d;
+    background:rgba(230,179,77,0.14); border-radius:7px; padding:5px 8px;
+  }
 
   .drop-stages{margin:-4px 0 10px 30px; padding-left:12px; border-left:2px solid var(--line);}
   .drop-row{display:grid; grid-template-columns:22px 1fr 1fr 30px; gap:8px; align-items:center; margin-bottom:8px;}
@@ -530,7 +541,7 @@
       <button class="btn-ghost" id="sheetSyncNow">Sync Now</button>
       <button class="btn-ghost" id="restoreFromSheetBtn">Restore from Sheet</button>
     </div>
-    <div class="settings-hint">Use Restore if this is a new phone, or you lost local data — it rebuilds your workout history from what's already in the Sheet (session duration excepted, since that was never stored there).</div>
+    <div class="settings-hint">Use Restore if this is a new phone, or you lost local data — it rebuilds your workout history from what's already in the Sheet, including session duration, drop sets, bodyweight exercises, and per-set timing.</div>
   </div>
 
   <div class="sync-status" id="syncStatus"><span class="sync-badge" id="syncBadge"></span><span id="syncStatusText">Not configured</span></div>

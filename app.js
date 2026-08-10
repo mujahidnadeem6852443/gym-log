@@ -354,22 +354,57 @@ function setElapsed(set){
   if(set.timerRunning && set.timerStartedAt) return (set.setDurationMs || 0) + (Date.now() - set.timerStartedAt);
   return set.setDurationMs || 0;
 }
-function startSetTimer(ex, idx){
-  const set = ex.sets[idx];
-  const prev = ex.sets[idx - 1];
+
+// The set immediately before this one in workout order — the previous set
+// in the same exercise, or (for an exercise's first set) the last set of
+// the nearest earlier exercise that has any sets. This is what lets rest
+// be tracked continuously across an exercise change, not just within one.
+function prevSetInWorkout(exercises, exIdx, idx){
+  const ex = exercises[exIdx];
+  if(idx > 0) return ex.sets[idx - 1];
+  for(let i = exIdx - 1; i >= 0; i--){
+    const otherSets = exercises[i].sets;
+    if(otherSets.length) return otherSets[otherSets.length - 1];
+  }
+  return null;
+}
+
+function startSetTimer(exercises, exIdx, idx){
+  const set = exercises[exIdx].sets[idx];
+  const prev = prevSetInWorkout(exercises, exIdx, idx);
   if(prev && prev.endedAt != null && set.restBeforeMs == null){
     set.restBeforeMs = Date.now() - prev.endedAt;
   }
   set.timerRunning = true;
   set.timerStartedAt = Date.now();
 }
-function stopSetTimer(ex, idx){
-  const set = ex.sets[idx];
+function stopSetTimer(exercises, exIdx, idx){
+  const set = exercises[exIdx].sets[idx];
   if(!set.timerRunning || !set.timerStartedAt) return;
   set.setDurationMs = (set.setDurationMs || 0) + (Date.now() - set.timerStartedAt);
   set.endedAt = Date.now();
   set.timerRunning = false;
   set.timerStartedAt = null;
+}
+
+// While no set is currently running, the very next set that hasn't been
+// timed yet is "resting" — this finds it (in workout order) so a live
+// countdown can be shown there. Returns null the instant any set is
+// running (rest is over) or once nothing is left untimed.
+function findRestingTarget(exercises){
+  const flat = [];
+  exercises.forEach((ex, exIdx) => ex.sets.forEach((set, idx) => flat.push({ exIdx, idx, set })));
+  if(flat.some(f => f.set.timerRunning)) return null;
+  let lastEnded = null;
+  flat.forEach(f => {
+    if(f.set.endedAt != null && (!lastEnded || f.set.endedAt > lastEnded.set.endedAt)) lastEnded = f;
+  });
+  if(!lastEnded) return null;
+  const next = flat[flat.indexOf(lastEnded) + 1];
+  if(next && !next.set.timerRunning && next.set.setDurationMs == null){
+    return { exIdx: next.exIdx, idx: next.idx, since: lastEnded.set.endedAt };
+  }
+  return null;
 }
 // Only meaningful once at least one set has timing data — an exercise
 // nobody used the timer on returns null so callers can skip the summary
@@ -409,16 +444,20 @@ function cleanSetsForSave(sets){
   return sets.filter(s => s.reps !== '' || s.weight !== '').map(cleanSetForSave);
 }
 
-// Live-updating registry for running set timers: renderers register the DOM
-// element that shows a set's elapsed time, and this ticks it directly by
-// textContent — never a full re-render, so it can't steal focus from
-// whatever input the user is currently typing into elsewhere on the page.
-// Cleared and repopulated by each render pass; harmless if both the
+// Live-updating registry for both running set timers and the current rest
+// countdown: renderers register the DOM element to update and this ticks it
+// directly by textContent — never a full re-render, so it can't steal focus
+// from whatever input the user is currently typing into elsewhere on the
+// page. Cleared and repopulated by each render pass; harmless if both the
 // Today's Workout list and a History edit form are registering at once.
 const liveSetTimerEls = new Map();
 setInterval(() => {
-  liveSetTimerEls.forEach(({ el, set }) => {
-    if(set.timerRunning) el.textContent = fmtShort(setElapsed(set));
+  liveSetTimerEls.forEach(entry => {
+    if(entry.type === 'running' && entry.set.timerRunning){
+      entry.el.textContent = fmtShort(setElapsed(entry.set));
+    } else if(entry.type === 'resting'){
+      entry.el.textContent = 'Resting ' + fmtShort(Date.now() - entry.since);
+    }
   });
 }, 1000);
 function removeExercise(exId){
@@ -432,8 +471,12 @@ function inputMode(input){ input.setAttribute('inputmode','decimal'); input.setA
 // Start/Stop set-timer control — off in the edit form, since "timing" a
 // set from a past workout doesn't make sense; drop sets and the bodyweight
 // toggle are still editable there since those are just data corrections.
-function buildSetRow(ex, idx, card, opts){
-  const { unit, showTimer, onMutate, onRerender, onRemoveSet } = opts;
+// Takes the whole `exercises` array (not just this one) because rest
+// tracking needs to look at the previous set even when that's in a
+// different exercise.
+function buildSetRow(exercises, exIdx, idx, card, opts){
+  const { unit, showTimer, onMutate, onRerender, onRemoveSet, restingTarget } = opts;
+  const ex = exercises[exIdx];
   const set = ex.sets[idx];
 
   const row = document.createElement('div');
@@ -484,7 +527,7 @@ function buildSetRow(ex, idx, card, opts){
     timerBtn.className = 'set-tool-btn set-timer-btn' + (set.timerRunning ? ' running' : '');
     timerBtn.textContent = set.timerRunning ? '■ Stop' : (set.setDurationMs ? '▶ Resume' : '▶ Start Set');
     timerBtn.addEventListener('click', () => {
-      if(set.timerRunning) stopSetTimer(ex, idx); else startSetTimer(ex, idx);
+      if(set.timerRunning) stopSetTimer(exercises, exIdx, idx); else startSetTimer(exercises, exIdx, idx);
       onMutate(); onRerender();
     });
     tools.appendChild(timerBtn);
@@ -494,13 +537,19 @@ function buildSetRow(ex, idx, card, opts){
       live.className = 'set-timer-live';
       live.textContent = fmtShort(setElapsed(set));
       tools.appendChild(live);
-      liveSetTimerEls.set(ex.id + ':' + idx, { el: live, set });
+      liveSetTimerEls.set(ex.id + ':' + idx + ':running', { type:'running', el: live, set });
     }
     if(set.restBeforeMs != null){
       const restEl = document.createElement('span');
       restEl.className = 'set-rest-readout';
       restEl.textContent = 'Rest ' + fmtShort(set.restBeforeMs);
       tools.appendChild(restEl);
+    } else if(restingTarget && restingTarget.exIdx === exIdx && restingTarget.idx === idx){
+      const restingEl = document.createElement('span');
+      restingEl.className = 'set-rest-live';
+      restingEl.textContent = 'Resting ' + fmtShort(Date.now() - restingTarget.since);
+      tools.appendChild(restingEl);
+      liveSetTimerEls.set(ex.id + ':' + idx + ':resting', { type:'resting', el: restingEl, since: restingTarget.since });
     }
   }
   card.appendChild(tools);
@@ -550,7 +599,8 @@ function renderExercises(focusId){
   const unit = getWeightUnit().toUpperCase();
   exerciseList.innerHTML = '';
   liveSetTimerEls.clear();
-  current.exercises.forEach(ex => {
+  const restingTarget = findRestingTarget(current.exercises);
+  current.exercises.forEach((ex, exIdx) => {
     const card = document.createElement('div');
     card.className = 'exercise';
 
@@ -619,8 +669,8 @@ function renderExercises(focusId){
     });
 
     ex.sets.forEach((set, idx) => {
-      buildSetRow(ex, idx, card, {
-        unit, showTimer: true,
+      buildSetRow(current.exercises, exIdx, idx, card, {
+        unit, showTimer: true, restingTarget,
         onMutate: saveCurrent,
         onRerender: renderExercises,
         onRemoveSet: (i) => removeSet(ex.id, i)
@@ -862,7 +912,7 @@ function renderEditForm(container, entry){
       });
 
       ex.sets.forEach((set, idx) => {
-        buildSetRow(ex, idx, card, {
+        buildSetRow(draft, exIdx, idx, card, {
           unit: getWeightUnit().toUpperCase(), showTimer: false,
           onMutate: () => {},
           onRerender: renderDraftExercises,
@@ -1851,8 +1901,14 @@ setInterval(() => {
   }
 }, 60 * 1000);
 
-unitKgBtn.addEventListener('click', () => { localStorage.setItem(K_WEIGHT_UNIT, 'kg'); updateAuthUI(); renderExercises(); });
-unitLbBtn.addEventListener('click', () => { localStorage.setItem(K_WEIGHT_UNIT, 'lb'); updateAuthUI(); renderExercises(); });
+unitKgBtn.addEventListener('click', () => {
+  localStorage.setItem(K_WEIGHT_UNIT, 'kg'); updateAuthUI(); renderExercises();
+  if(userEmail && accessToken) syncWeightUnitToSheet(accessToken).catch(() => {});
+});
+unitLbBtn.addEventListener('click', () => {
+  localStorage.setItem(K_WEIGHT_UNIT, 'lb'); updateAuthUI(); renderExercises();
+  if(userEmail && accessToken) syncWeightUnitToSheet(accessToken).catch(() => {});
+});
 
 // ---------- Display name (local, with best-effort sync to the Sheet) ----------
 function renderBrandGreeting(){
@@ -1914,11 +1970,20 @@ async function afterSignIn(){
 
     const hasRemoteTabs = sheetMetaCache && Object.keys(sheetMetaCache).some(t => t !== 'Overview');
     if(history.length === 0 && hasRemoteTabs){
+      // Genuinely new device (no local history yet, but the account already
+      // has data) — also adopt the weight unit already used on the account,
+      // rather than leaving this device on the "kg" default regardless of
+      // what was chosen elsewhere.
+      const sheetUnit = await readWeightUnitFromSheet(accessToken).catch(() => null);
+      if(sheetUnit){ localStorage.setItem(K_WEIGHT_UNIT, sheetUnit); updateAuthUI(); renderExercises(); }
+
       if(confirm('We found existing workouts in your Google Sheet. Restore them to this device?')){
         setSyncStatus('ok', 'Restoring…');
         const count = await restoreFromSheet();
         setSyncStatus('ok', count > 0 ? `Restored ${count} workout${count===1?'':'s'} from your Sheet.` : 'Nothing to restore.');
       }
+    } else {
+      syncWeightUnitToSheet(accessToken).catch(() => {});
     }
 
     await flushStalePendingDeletes();
@@ -2050,6 +2115,27 @@ async function syncDisplayNameToSheet(token){
   await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Overview!A4:B4?valueInputOption=USER_ENTERED`,
     { method:'PUT', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values:[['Name', name]] }) }
+  );
+}
+
+// Overview!A5:B5 holds ['Weight Unit', 'kg'|'lb'] — same pattern as the
+// Name row above, one below it.
+async function readWeightUnitFromSheet(token){
+  if(!spreadsheetId) return null;
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Overview!B5`,
+    { headers:{ Authorization:'Bearer '+token } }
+  );
+  if(!res.ok) return null;
+  const data = await res.json();
+  const value = (data.values && data.values[0] && data.values[0][0] || '').toLowerCase();
+  return (value === 'kg' || value === 'lb') ? value : null;
+}
+async function syncWeightUnitToSheet(token){
+  if(!spreadsheetId) return;
+  await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Overview!A5:B5?valueInputOption=USER_ENTERED`,
+    { method:'PUT', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values:[['Weight Unit', getWeightUnit()]] }) }
   );
 }
 
@@ -2316,8 +2402,8 @@ function parseSeparatorTime(text){
 // Rebuilds local workout entries from whatever is currently sitting in the
 // Sheet, using the same "wk:<id>" row notes that power remote delete to
 // regroup rows back into distinct workouts — so a wiped phone or a brand
-// new device can recover everything except the session duration (never
-// written to the Sheet in the first place).
+// new device can recover everything: exercises, sets, drop-set stages,
+// bodyweight flags, per-set timing, and session duration.
 async function restoreFromSheet(){
   if(!userEmail) throw new Error('Not signed in');
   const token = await getValidToken();
@@ -2341,15 +2427,23 @@ async function restoreFromSheet(){
   (data.sheets || []).forEach(sheet => {
     const title = sheet.properties.title;
     if(title === 'Overview'){
+      const overviewRows = (sheet.data && sheet.data[0] && sheet.data[0].rowData) || [];
       if(!getDisplayName()){
-        const rowData = (sheet.data && sheet.data[0] && sheet.data[0].rowData) || [];
-        const nameCell = rowData[3] && rowData[3].values && rowData[3].values[1];
+        const nameCell = overviewRows[3] && overviewRows[3].values && overviewRows[3].values[1];
         const sheetName = nameCell && nameCell.formattedValue;
         if(sheetName){
           localStorage.setItem(K_DISPLAY_NAME, sheetName);
           displayNameInput.value = sheetName;
           renderBrandGreeting();
         }
+      }
+      // Only adopt the Sheet's weight unit on a genuinely fresh device (no
+      // local history yet) — same signal used elsewhere in this function —
+      // so restoring never silently flips units on a device already in use.
+      if(history.length === 0){
+        const unitCell = overviewRows[4] && overviewRows[4].values && overviewRows[4].values[1];
+        const sheetUnit = ((unitCell && unitCell.formattedValue) || '').toLowerCase();
+        if(sheetUnit === 'kg' || sheetUnit === 'lb') localStorage.setItem(K_WEIGHT_UNIT, sheetUnit);
       }
       return;
     }
@@ -2551,6 +2645,7 @@ async function syncAll(showAlerts){
     // fine, and the next sync retries this.
     try{ await syncAttendanceSheets(token); } catch(e){ /* retried next sync */ }
     try{ await syncDisplayNameToSheet(token); } catch(e){ /* retried next sync */ }
+    try{ await syncWeightUnitToSheet(token); } catch(e){ /* retried next sync */ }
 
     refreshSyncBadge();
     if(showAlerts){
