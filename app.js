@@ -66,6 +66,13 @@ function parseDurationToMs(str){
   if(!m) return 0;
   return ((parseInt(m[1],10)*3600) + (parseInt(m[2],10)*60) + parseInt(m[3],10)) * 1000;
 }
+// Inverse of fmtShort's mm:ss — returns null (not 0) when there's nothing
+// to parse, so callers can tell "no timing data" apart from "zero seconds".
+function parseShortToMs(str){
+  const m = /^(\d+):(\d{2})$/.exec((str || '').trim());
+  if(!m) return null;
+  return (parseInt(m[1], 10) * 60 + parseInt(m[2], 10)) * 1000;
+}
 function currentElapsed(){
   if(timer.running && timer.startedAt) return timer.elapsedMs + (Date.now() - timer.startedAt);
   return timer.elapsedMs;
@@ -122,17 +129,18 @@ renderTimer();
 const MUSCLE_GROUPS = ['Chest', 'Back', 'Biceps', 'Triceps', 'Shoulders', 'Legs', 'Abs'];
 const MUSCLE_ABBR = { Chest:'C', Back:'B', Biceps:'Bi', Triceps:'Tri', Shoulders:'S', Legs:'L', Abs:'A' };
 
-// rememberExercise(name, muscle) — muscle is optional; when omitted, any
-// muscle group already remembered for this name is kept as-is rather than
-// being cleared.
-function rememberExercise(name, muscle){
+// rememberExercise(name, muscle, bodyweight) — muscle/bodyweight are both
+// optional; when omitted, whatever's already remembered for this name is
+// kept as-is rather than being cleared.
+function rememberExercise(name, muscle, bodyweight){
   const trimmed = sanitizeText(name).trim();
   if(!trimmed) return;
   const key = trimmed.toLowerCase();
   const existing = exerciseDict.find(e => e.name.toLowerCase() === key);
   const finalMuscle = (muscle !== undefined && muscle !== '') ? muscle : (existing ? existing.muscle : '');
+  const finalBodyweight = (bodyweight !== undefined) ? !!bodyweight : (existing ? !!existing.bodyweight : false);
   exerciseDict = exerciseDict.filter(e => e.name.toLowerCase() !== key);
-  exerciseDict.unshift({ name: trimmed, muscle: finalMuscle });
+  exerciseDict.unshift({ name: trimmed, muscle: finalMuscle, bodyweight: finalBodyweight });
   if(exerciseDict.length > 300) exerciseDict.length = 300;
   saveExerciseDict(exerciseDict);
 }
@@ -141,6 +149,12 @@ function getMuscleForExercise(name){
   const key = name.trim().toLowerCase();
   const found = exerciseDict.find(e => e.name.toLowerCase() === key);
   return found ? found.muscle : '';
+}
+
+function getBodyweightForExercise(name){
+  const key = name.trim().toLowerCase();
+  const found = exerciseDict.find(e => e.name.toLowerCase() === key);
+  return found ? !!found.bodyweight : false;
 }
 
 // Dictionary entries first (most-recent-first), then anything already in
@@ -178,6 +192,55 @@ function getLastPerformance(exerciseName){
 
 function formatSetsInline(sets){
   return sets.map(s => `${s.weight === '' ? '-' : s.weight}×${s.reps === '' ? '-' : s.reps}`).join(', ');
+}
+
+// One line of read-only set detail, e.g. "Set 1:  12 reps  ×  60" — with
+// any drop-set continuations appended as "  ⤵ 8×50  ⤵ 5×40". A plain set
+// (no drops) renders exactly as before.
+function formatSetLine(set, idx){
+  let text = `Set ${idx+1}:  ${set.reps === '' ? '-' : set.reps} reps  ×  ${set.weight === '' ? '-' : set.weight}`;
+  if(set.drops && set.drops.length){
+    text += set.drops.map(d => `  ⤵ ${d.reps === '' ? '-' : d.reps}×${d.weight === '' ? '-' : d.weight}`).join('');
+  }
+  return text;
+}
+
+// Shared read-only exercise block for History and the Calendar day-detail
+// view: name, muscle tag, bodyweight tag (if set), each set line (with any
+// drop stages), and a timing summary line (if the set timer was used).
+// `classes` supplies each view's own CSS class names so the two call sites
+// keep rendering visually identical to before for data with none of the
+// new fields.
+function renderExerciseBlock(ex, classes){
+  const block = document.createElement('div');
+  block.className = classes.block;
+  const title = document.createElement('div');
+  title.className = classes.name; title.textContent = ex.name;
+  if(ex.muscle){
+    const tag = document.createElement('span');
+    tag.className = 'muscle-tag'; tag.textContent = ex.muscle;
+    title.appendChild(tag);
+  }
+  if(ex.bodyweight){
+    const bwTag = document.createElement('span');
+    bwTag.className = 'muscle-tag bodyweight-tag'; bwTag.textContent = 'Bodyweight';
+    title.appendChild(bwTag);
+  }
+  block.appendChild(title);
+  ex.sets.forEach((s, i) => {
+    const line = document.createElement('div');
+    line.className = classes.line;
+    line.textContent = formatSetLine(s, i);
+    block.appendChild(line);
+  });
+  const timing = exerciseTimingSummary(ex);
+  if(timing){
+    const summary = document.createElement('div');
+    summary.className = classes.line + ' exercise-timing-summary';
+    summary.textContent = `Set time: ${fmtShort(timing.setTimeMs)} · Rest time: ${fmtShort(timing.restTimeMs)}`;
+    block.appendChild(summary);
+  }
+  return block;
 }
 
 // Wraps a text input with a lightweight, mobile-reliable suggestion dropdown.
@@ -258,15 +321,235 @@ function removeSet(exId, idx){
   if(ex.sets.length === 0) ex.sets.push({reps:'', weight:''});
   saveCurrent(); renderExercises();
 }
+
+// ---------- Drop sets ----------
+// A drop set continues a set at a reduced weight without resting — each
+// continuation is its own {reps, weight} stage appended to set.drops. A
+// plain set (no drops array, or an empty one) behaves exactly as before
+// everywhere volume is computed or the set is displayed.
+function addDropStage(set){
+  if(!set.drops) set.drops = [];
+  set.drops.push({ reps:'', weight:'' });
+}
+function removeDropStage(set, dropIdx){
+  set.drops.splice(dropIdx, 1);
+  if(set.drops.length === 0) delete set.drops;
+}
+
+// ---------- Per-set timer ----------
+// Fully independent of the overall session stopwatch above: tracks how
+// long each individual set took, and how long the rest was before it.
+// setDurationMs accumulates across start/stop cycles for that set (same
+// pattern as the session timer's elapsedMs); restBeforeMs is captured once,
+// the moment a set is first started, as the time since the previous set in
+// the same exercise was stopped — never recomputed on a later resume of
+// the same set.
+function fmtShort(ms){
+  const total = Math.floor(ms / 1000);
+  const m = String(Math.floor(total / 60)).padStart(2, '0');
+  const s = String(total % 60).padStart(2, '0');
+  return m + ':' + s;
+}
+function setElapsed(set){
+  if(set.timerRunning && set.timerStartedAt) return (set.setDurationMs || 0) + (Date.now() - set.timerStartedAt);
+  return set.setDurationMs || 0;
+}
+function startSetTimer(ex, idx){
+  const set = ex.sets[idx];
+  const prev = ex.sets[idx - 1];
+  if(prev && prev.endedAt != null && set.restBeforeMs == null){
+    set.restBeforeMs = Date.now() - prev.endedAt;
+  }
+  set.timerRunning = true;
+  set.timerStartedAt = Date.now();
+}
+function stopSetTimer(ex, idx){
+  const set = ex.sets[idx];
+  if(!set.timerRunning || !set.timerStartedAt) return;
+  set.setDurationMs = (set.setDurationMs || 0) + (Date.now() - set.timerStartedAt);
+  set.endedAt = Date.now();
+  set.timerRunning = false;
+  set.timerStartedAt = null;
+}
+// Only meaningful once at least one set has timing data — an exercise
+// nobody used the timer on returns null so callers can skip the summary
+// line entirely rather than show "0:00 · 0:00".
+function exerciseTimingSummary(ex){
+  let setTimeMs = 0, restTimeMs = 0, any = false;
+  ex.sets.forEach(s => {
+    if(s.setDurationMs){ setTimeMs += s.setDurationMs; any = true; }
+    if(s.restBeforeMs){ restTimeMs += s.restBeforeMs; any = true; }
+  });
+  return any ? { setTimeMs, restTimeMs } : null;
+}
+
+// Normalizes one set for saving: numbers instead of input strings, drops
+// stripped down to only ones with actual values (or removed entirely if
+// none), and any still-running set timer finalized rather than saved
+// mid-run or silently lost — same treatment Save Workout already gives the
+// overall exercises array.
+function cleanSetForSave(s){
+  const clean = {
+    reps: s.reps === '' ? '' : Number(s.reps),
+    weight: s.weight === '' ? '' : Number(s.weight)
+  };
+  if(s.drops && s.drops.length){
+    const drops = s.drops
+      .filter(d => d.reps !== '' || d.weight !== '')
+      .map(d => ({ reps: d.reps === '' ? '' : Number(d.reps), weight: d.weight === '' ? '' : Number(d.weight) }));
+    if(drops.length) clean.drops = drops;
+  }
+  let setDurationMs = s.setDurationMs || 0;
+  if(s.timerRunning && s.timerStartedAt) setDurationMs += Date.now() - s.timerStartedAt;
+  if(setDurationMs) clean.setDurationMs = setDurationMs;
+  if(s.restBeforeMs != null) clean.restBeforeMs = s.restBeforeMs;
+  return clean;
+}
+function cleanSetsForSave(sets){
+  return sets.filter(s => s.reps !== '' || s.weight !== '').map(cleanSetForSave);
+}
+
+// Live-updating registry for running set timers: renderers register the DOM
+// element that shows a set's elapsed time, and this ticks it directly by
+// textContent — never a full re-render, so it can't steal focus from
+// whatever input the user is currently typing into elsewhere on the page.
+// Cleared and repopulated by each render pass; harmless if both the
+// Today's Workout list and a History edit form are registering at once.
+const liveSetTimerEls = new Map();
+setInterval(() => {
+  liveSetTimerEls.forEach(({ el, set }) => {
+    if(set.timerRunning) el.textContent = fmtShort(setElapsed(set));
+  });
+}, 1000);
 function removeExercise(exId){
   current.exercises = current.exercises.filter(e => e.id !== exId);
   saveCurrent(); renderExercises();
 }
 function inputMode(input){ input.setAttribute('inputmode','decimal'); input.setAttribute('pattern','[0-9]*'); }
 
+// Shared by Today's Workout and the History edit form so the drop-set /
+// timer logic exists in exactly one place. `showTimer` gates the live
+// Start/Stop set-timer control — off in the edit form, since "timing" a
+// set from a past workout doesn't make sense; drop sets and the bodyweight
+// toggle are still editable there since those are just data corrections.
+function buildSetRow(ex, idx, card, opts){
+  const { unit, showTimer, onMutate, onRerender, onRemoveSet } = opts;
+  const set = ex.sets[idx];
+
+  const row = document.createElement('div');
+  row.className = 'set-row';
+  const num = document.createElement('div');
+  num.className = 'set-num'; num.textContent = idx + 1;
+
+  const repsField = document.createElement('div'); repsField.className = 'set-field';
+  const repsLabel = document.createElement('label'); repsLabel.textContent = 'REPS';
+  const repsInput = document.createElement('input'); repsInput.type = 'number'; inputMode(repsInput);
+  repsInput.value = set.reps;
+  repsInput.addEventListener('input', e => { set.reps = e.target.value; onMutate(); });
+  repsField.appendChild(repsLabel); repsField.appendChild(repsInput);
+
+  const weightField = document.createElement('div'); weightField.className = 'set-field';
+  const weightLabel = document.createElement('label');
+  weightLabel.textContent = (ex.bodyweight ? 'ADDED WEIGHT (' : 'WEIGHT (') + unit + ')';
+  const weightInput = document.createElement('input'); weightInput.type = 'number'; inputMode(weightInput);
+  weightInput.value = set.weight;
+  weightInput.addEventListener('input', e => { set.weight = e.target.value; onMutate(); });
+  weightField.appendChild(weightLabel); weightField.appendChild(weightInput);
+
+  const rm = document.createElement('button'); rm.className = 'remove-set'; rm.textContent = '✕';
+  rm.setAttribute('aria-label', 'Remove set');
+  rm.addEventListener('click', () => onRemoveSet(idx));
+
+  row.appendChild(num); row.appendChild(repsField); row.appendChild(weightField); row.appendChild(rm);
+  card.appendChild(row);
+
+  const tools = document.createElement('div');
+  tools.className = 'set-tools';
+
+  const hasDrops = !!(set.drops && set.drops.length);
+  const dropBtn = document.createElement('button');
+  dropBtn.type = 'button';
+  dropBtn.className = 'set-tool-btn' + (hasDrops ? ' active' : '');
+  dropBtn.textContent = '⤵ Drop Set';
+  dropBtn.setAttribute('aria-label', 'Toggle drop set');
+  dropBtn.addEventListener('click', () => {
+    if(set.drops && set.drops.length){ delete set.drops; } else { addDropStage(set); }
+    onMutate(); onRerender();
+  });
+  tools.appendChild(dropBtn);
+
+  if(showTimer){
+    const timerBtn = document.createElement('button');
+    timerBtn.type = 'button';
+    timerBtn.className = 'set-tool-btn set-timer-btn' + (set.timerRunning ? ' running' : '');
+    timerBtn.textContent = set.timerRunning ? '■ Stop' : (set.setDurationMs ? '▶ Resume' : '▶ Start Set');
+    timerBtn.addEventListener('click', () => {
+      if(set.timerRunning) stopSetTimer(ex, idx); else startSetTimer(ex, idx);
+      onMutate(); onRerender();
+    });
+    tools.appendChild(timerBtn);
+
+    if(set.setDurationMs || set.timerRunning){
+      const live = document.createElement('span');
+      live.className = 'set-timer-live';
+      live.textContent = fmtShort(setElapsed(set));
+      tools.appendChild(live);
+      liveSetTimerEls.set(ex.id + ':' + idx, { el: live, set });
+    }
+    if(set.restBeforeMs != null){
+      const restEl = document.createElement('span');
+      restEl.className = 'set-rest-readout';
+      restEl.textContent = 'Rest ' + fmtShort(set.restBeforeMs);
+      tools.appendChild(restEl);
+    }
+  }
+  card.appendChild(tools);
+
+  if(hasDrops){
+    const dropsWrap = document.createElement('div');
+    dropsWrap.className = 'drop-stages';
+    set.drops.forEach((drop, dIdx) => {
+      const dRow = document.createElement('div');
+      dRow.className = 'drop-row';
+      const dNum = document.createElement('div'); dNum.className = 'drop-num'; dNum.textContent = '↳' + (dIdx + 1);
+
+      const dRepsField = document.createElement('div'); dRepsField.className = 'set-field';
+      const dRepsLabel = document.createElement('label'); dRepsLabel.textContent = 'REPS';
+      const dRepsInput = document.createElement('input'); dRepsInput.type = 'number'; inputMode(dRepsInput);
+      dRepsInput.value = drop.reps;
+      dRepsInput.addEventListener('input', e => { drop.reps = e.target.value; onMutate(); });
+      dRepsField.appendChild(dRepsLabel); dRepsField.appendChild(dRepsInput);
+
+      const dWeightField = document.createElement('div'); dWeightField.className = 'set-field';
+      const dWeightLabel = document.createElement('label'); dWeightLabel.textContent = 'WEIGHT (' + unit + ')';
+      const dWeightInput = document.createElement('input'); dWeightInput.type = 'number'; inputMode(dWeightInput);
+      dWeightInput.value = drop.weight;
+      dWeightInput.addEventListener('input', e => { drop.weight = e.target.value; onMutate(); });
+      dWeightField.appendChild(dWeightLabel); dWeightField.appendChild(dWeightInput);
+
+      const dRm = document.createElement('button'); dRm.className = 'remove-set'; dRm.textContent = '✕';
+      dRm.setAttribute('aria-label', 'Remove drop');
+      dRm.addEventListener('click', () => { removeDropStage(set, dIdx); onMutate(); onRerender(); });
+
+      dRow.appendChild(dNum); dRow.appendChild(dRepsField); dRow.appendChild(dWeightField); dRow.appendChild(dRm);
+      dropsWrap.appendChild(dRow);
+    });
+
+    const addDropBtn = document.createElement('button');
+    addDropBtn.type = 'button';
+    addDropBtn.className = 'add-drop-btn';
+    addDropBtn.textContent = '+ Add Drop';
+    addDropBtn.addEventListener('click', () => { addDropStage(set); onMutate(); onRerender(); });
+    dropsWrap.appendChild(addDropBtn);
+
+    card.appendChild(dropsWrap);
+  }
+}
+
 function renderExercises(focusId){
   const unit = getWeightUnit().toUpperCase();
   exerciseList.innerHTML = '';
+  liveSetTimerEls.clear();
   current.exercises.forEach(ex => {
     const card = document.createElement('div');
     card.className = 'exercise';
@@ -287,9 +570,23 @@ function renderExercises(focusId){
 
     const muscleSelect = createMuscleSelect(ex.muscle, (value) => {
       ex.muscle = value; saveCurrent();
-      rememberExercise(ex.name, value);
+      rememberExercise(ex.name, value, ex.bodyweight);
     });
     card.appendChild(muscleSelect);
+
+    const bwLabel = document.createElement('label');
+    bwLabel.className = 'bodyweight-toggle';
+    const bwCheckbox = document.createElement('input');
+    bwCheckbox.type = 'checkbox';
+    bwCheckbox.checked = !!ex.bodyweight;
+    bwCheckbox.addEventListener('change', e => {
+      ex.bodyweight = e.target.checked; saveCurrent();
+      rememberExercise(ex.name, ex.muscle, ex.bodyweight);
+      renderExercises();
+    });
+    bwLabel.appendChild(bwCheckbox);
+    bwLabel.appendChild(document.createTextNode('Bodyweight exercise'));
+    card.appendChild(bwLabel);
 
     const lastPerfEl = document.createElement('div');
     lastPerfEl.className = 'last-performance';
@@ -307,7 +604,7 @@ function renderExercises(focusId){
 
     nameInput.addEventListener('input', e => { ex.name = e.target.value; saveCurrent(); updateLastPerf(); });
     nameInput.addEventListener('blur', () => {
-      rememberExercise(ex.name, ex.muscle);
+      rememberExercise(ex.name, ex.muscle, ex.bodyweight);
       if(!ex.muscle){
         const known = getMuscleForExercise(ex.name);
         if(known){ ex.muscle = known; muscleSelect.value = known; saveCurrent(); }
@@ -317,36 +614,17 @@ function renderExercises(focusId){
       ex.name = name; saveCurrent(); updateLastPerf();
       const known = getMuscleForExercise(name);
       if(known){ ex.muscle = known; muscleSelect.value = known; }
-      rememberExercise(name, ex.muscle);
+      rememberExercise(name, ex.muscle, ex.bodyweight);
       saveCurrent();
     });
 
     ex.sets.forEach((set, idx) => {
-      const row = document.createElement('div');
-      row.className = 'set-row';
-      const num = document.createElement('div');
-      num.className = 'set-num'; num.textContent = idx+1;
-
-      const repsField = document.createElement('div'); repsField.className = 'set-field';
-      const repsLabel = document.createElement('label'); repsLabel.textContent = 'REPS';
-      const repsInput = document.createElement('input'); repsInput.type='number'; inputMode(repsInput);
-      repsInput.value = set.reps;
-      repsInput.addEventListener('input', e => { set.reps = e.target.value; saveCurrent(); });
-      repsField.appendChild(repsLabel); repsField.appendChild(repsInput);
-
-      const weightField = document.createElement('div'); weightField.className = 'set-field';
-      const weightLabel = document.createElement('label'); weightLabel.textContent = 'WEIGHT (' + unit + ')';
-      const weightInput = document.createElement('input'); weightInput.type='number'; inputMode(weightInput);
-      weightInput.value = set.weight;
-      weightInput.addEventListener('input', e => { set.weight = e.target.value; saveCurrent(); });
-      weightField.appendChild(weightLabel); weightField.appendChild(weightInput);
-
-      const rm = document.createElement('button'); rm.className = 'remove-set'; rm.textContent = '✕';
-      rm.setAttribute('aria-label', 'Remove set');
-      rm.addEventListener('click', () => removeSet(ex.id, idx));
-
-      row.appendChild(num); row.appendChild(repsField); row.appendChild(weightField); row.appendChild(rm);
-      card.appendChild(row);
+      buildSetRow(ex, idx, card, {
+        unit, showTimer: true,
+        onMutate: saveCurrent,
+        onRerender: renderExercises,
+        onRemoveSet: (i) => removeSet(ex.id, i)
+      });
     });
 
     const addSetBtn = document.createElement('button');
@@ -354,6 +632,14 @@ function renderExercises(focusId){
     addSetBtn.setAttribute('aria-label', 'Add set');
     addSetBtn.addEventListener('click', () => addSet(ex.id));
     card.appendChild(addSetBtn);
+
+    const timing = exerciseTimingSummary(ex);
+    if(timing){
+      const summary = document.createElement('div');
+      summary.className = 'exercise-timing-summary';
+      summary.textContent = `Set time: ${fmtShort(timing.setTimeMs)} · Rest time: ${fmtShort(timing.restTimeMs)}`;
+      card.appendChild(summary);
+    }
 
     exerciseList.appendChild(card);
     if(focusId === ex.id) nameInput.focus();
@@ -367,18 +653,14 @@ saveWorkoutBtn.addEventListener('click', () => {
     .map(ex => ({
       name: sanitizeText(ex.name || 'Unnamed exercise').trim() || 'Unnamed exercise',
       muscle: ex.muscle || '',
-      sets: ex.sets
-        .filter(s => s.reps !== '' || s.weight !== '')
-        .map(s => ({
-          reps: s.reps === '' ? '' : Number(s.reps),
-          weight: s.weight === '' ? '' : Number(s.weight)
-        }))
+      bodyweight: !!ex.bodyweight,
+      sets: cleanSetsForSave(ex.sets)
     }))
     .filter(ex => ex.sets.length > 0);
 
   if(cleanExercises.length === 0){ alert('Log at least one set before saving.'); return; }
 
-  cleanExercises.forEach(ex => rememberExercise(ex.name, ex.muscle));
+  cleanExercises.forEach(ex => rememberExercise(ex.name, ex.muscle, ex.bodyweight));
 
   // Exercises only — the stopwatch is fully independent now (see Save Time)
   // and must never be read or reset from here.
@@ -482,23 +764,7 @@ function renderHistory(){
       renderEditForm(body, entry);
     } else {
       entry.exercises.forEach(ex => {
-        const block = document.createElement('div');
-        block.className = 'hist-exercise';
-        const title = document.createElement('div');
-        title.className = 'hist-exercise-name'; title.textContent = ex.name;
-        if(ex.muscle){
-          const tag = document.createElement('span');
-          tag.className = 'muscle-tag'; tag.textContent = ex.muscle;
-          title.appendChild(tag);
-        }
-        block.appendChild(title);
-        ex.sets.forEach((s,i) => {
-          const line = document.createElement('div');
-          line.className = 'hist-set-line';
-          line.textContent = `Set ${i+1}:  ${s.reps === '' ? '-' : s.reps} reps  ×  ${s.weight === '' ? '-' : s.weight}`;
-          block.appendChild(line);
-        });
-        body.appendChild(block);
+        body.appendChild(renderExerciseBlock(ex, { block:'hist-exercise', name:'hist-exercise-name', line:'hist-set-line' }));
       });
 
       const actions = document.createElement('div');
@@ -562,13 +828,27 @@ function renderEditForm(container, entry){
 
       const muscleSelect = createMuscleSelect(ex.muscle, (value) => {
         ex.muscle = value;
-        rememberExercise(ex.name, value);
+        rememberExercise(ex.name, value, ex.bodyweight);
       });
       card.appendChild(muscleSelect);
 
+      const bwLabel = document.createElement('label');
+      bwLabel.className = 'bodyweight-toggle';
+      const bwCheckbox = document.createElement('input');
+      bwCheckbox.type = 'checkbox';
+      bwCheckbox.checked = !!ex.bodyweight;
+      bwCheckbox.addEventListener('change', e => {
+        ex.bodyweight = e.target.checked;
+        rememberExercise(ex.name, ex.muscle, ex.bodyweight);
+        renderDraftExercises();
+      });
+      bwLabel.appendChild(bwCheckbox);
+      bwLabel.appendChild(document.createTextNode('Bodyweight exercise'));
+      card.appendChild(bwLabel);
+
       nameInput.addEventListener('input', e => { ex.name = e.target.value; });
       nameInput.addEventListener('blur', () => {
-        rememberExercise(ex.name, ex.muscle);
+        rememberExercise(ex.name, ex.muscle, ex.bodyweight);
         if(!ex.muscle){
           const known = getMuscleForExercise(ex.name);
           if(known){ ex.muscle = known; muscleSelect.value = known; }
@@ -578,43 +858,34 @@ function renderEditForm(container, entry){
         ex.name = name;
         const known = getMuscleForExercise(name);
         if(known){ ex.muscle = known; muscleSelect.value = known; }
-        rememberExercise(name, ex.muscle);
+        rememberExercise(name, ex.muscle, ex.bodyweight);
       });
 
       ex.sets.forEach((set, idx) => {
-        const row = document.createElement('div');
-        row.className = 'set-row';
-        const num = document.createElement('div'); num.className = 'set-num'; num.textContent = idx + 1;
-
-        const repsField = document.createElement('div'); repsField.className = 'set-field';
-        const repsLabel = document.createElement('label'); repsLabel.textContent = 'REPS';
-        const repsInput = document.createElement('input'); repsInput.type = 'number'; inputMode(repsInput);
-        repsInput.value = set.reps;
-        repsInput.addEventListener('input', e => { set.reps = e.target.value; });
-        repsField.appendChild(repsLabel); repsField.appendChild(repsInput);
-
-        const weightField = document.createElement('div'); weightField.className = 'set-field';
-        const weightLabel = document.createElement('label'); weightLabel.textContent = 'WEIGHT (' + getWeightUnit().toUpperCase() + ')';
-        const weightInput = document.createElement('input'); weightInput.type = 'number'; inputMode(weightInput);
-        weightInput.value = set.weight;
-        weightInput.addEventListener('input', e => { set.weight = e.target.value; });
-        weightField.appendChild(weightLabel); weightField.appendChild(weightInput);
-
-        const rmSet = document.createElement('button'); rmSet.className = 'remove-set'; rmSet.textContent = '✕'; rmSet.setAttribute('aria-label', 'Remove set');
-        rmSet.addEventListener('click', () => {
-          ex.sets.splice(idx, 1);
-          if(ex.sets.length === 0) ex.sets.push({ reps:'', weight:'' });
-          renderDraftExercises();
+        buildSetRow(ex, idx, card, {
+          unit: getWeightUnit().toUpperCase(), showTimer: false,
+          onMutate: () => {},
+          onRerender: renderDraftExercises,
+          onRemoveSet: (i) => {
+            ex.sets.splice(i, 1);
+            if(ex.sets.length === 0) ex.sets.push({ reps:'', weight:'' });
+            renderDraftExercises();
+          }
         });
-
-        row.appendChild(num); row.appendChild(repsField); row.appendChild(weightField); row.appendChild(rmSet);
-        card.appendChild(row);
       });
 
       const addSetBtn = document.createElement('button');
       addSetBtn.className = 'add-set-btn'; addSetBtn.textContent = '+'; addSetBtn.setAttribute('aria-label', 'Add set');
       addSetBtn.addEventListener('click', () => { ex.sets.push({ reps:'', weight:'' }); renderDraftExercises(); });
       card.appendChild(addSetBtn);
+
+      const timing = exerciseTimingSummary(ex);
+      if(timing){
+        const summary = document.createElement('div');
+        summary.className = 'exercise-timing-summary';
+        summary.textContent = `Set time: ${fmtShort(timing.setTimeMs)} · Rest time: ${fmtShort(timing.restTimeMs)}`;
+        card.appendChild(summary);
+      }
 
       exList.appendChild(card);
     });
@@ -636,10 +907,8 @@ function renderEditForm(container, entry){
       .map(ex => ({
         name: sanitizeText(ex.name || 'Unnamed exercise').trim() || 'Unnamed exercise',
         muscle: ex.muscle || '',
-        sets: ex.sets.filter(s => s.reps !== '' || s.weight !== '').map(s => ({
-          reps: s.reps === '' ? '' : Number(s.reps),
-          weight: s.weight === '' ? '' : Number(s.weight)
-        }))
+        bodyweight: !!ex.bodyweight,
+        sets: cleanSetsForSave(ex.sets)
       }))
       .filter(ex => ex.sets.length > 0);
     if(cleaned.length === 0){ alert('A workout needs at least one set.'); return; }
@@ -661,7 +930,7 @@ function renderEditForm(container, entry){
 
 async function saveEditedEntry(entry, newExercises){
   entry.exercises = newExercises;
-  newExercises.forEach(ex => rememberExercise(ex.name, ex.muscle));
+  newExercises.forEach(ex => rememberExercise(ex.name, ex.muscle, ex.bodyweight));
   if(entry.synced && userEmail){
     try{
       const token = await getValidToken();
@@ -901,23 +1170,7 @@ function showDayDetail(key){
     }
     entries.forEach(entry => {
       entry.exercises.forEach(ex => {
-        const block = document.createElement('div');
-        block.className = 'dd-exercise';
-        const title = document.createElement('div');
-        title.className = 'dd-exercise-name'; title.textContent = ex.name;
-        if(ex.muscle){
-          const tag = document.createElement('span');
-          tag.className = 'muscle-tag'; tag.textContent = ex.muscle;
-          title.appendChild(tag);
-        }
-        block.appendChild(title);
-        ex.sets.forEach((s,i) => {
-          const line = document.createElement('div');
-          line.className = 'dd-set-line';
-          line.textContent = `Set ${i+1}:  ${s.reps === '' ? '-' : s.reps} reps  ×  ${s.weight === '' ? '-' : s.weight}`;
-          block.appendChild(line);
-        });
-        dayDetailBody.appendChild(block);
+        dayDetailBody.appendChild(renderExerciseBlock(ex, { block:'dd-exercise', name:'dd-exercise-name', line:'dd-set-line' }));
       });
     });
   }
@@ -957,8 +1210,28 @@ calNext.addEventListener('click', () => {
 const TREND_COLOR = { improved:'#5fd88f', stable:'#4da8ff', declined:'#ff6b6b', none:'#8b9199' };
 const CHART_INK = { line:'#2a2d31', muted:'#8b9199', text:'#ececee', ring:'#17191c' };
 
-function computeSetVolume(sets){
-  return sets.reduce((sum, s) => sum + (Number(s.reps) || 0) * (Number(s.weight) || 0), 0);
+// A "stage" is one reps×weight pair — either a set's own main numbers, or
+// one of its drop-set continuations. Splitting it out here means drop sets
+// need no special case anywhere volume is summed: a plain set is just a
+// stage list of length 1, identical to how it always worked.
+function setStages(s){
+  return (s.drops && s.drops.length) ? [{ reps:s.reps, weight:s.weight }, ...s.drops] : [{ reps:s.reps, weight:s.weight }];
+}
+
+// Bodyweight exercises have no numeric total without knowing body mass
+// (not tracked by this app), so an unweighted stage counts its reps
+// directly as load — keeps the number non-zero and still comparable
+// session to session. A stage with added weight is unaffected: reps ×
+// added-weight, same math as a normal weighted exercise.
+function stageVolume(stage, isBodyweight){
+  const reps = Number(stage.reps) || 0;
+  const weight = Number(stage.weight) || 0;
+  if(isBodyweight && weight === 0) return reps;
+  return reps * weight;
+}
+
+function computeSetVolume(sets, isBodyweight){
+  return sets.reduce((sum, s) => sum + setStages(s).reduce((ss, stage) => ss + stageVolume(stage, isBodyweight), 0), 0);
 }
 
 // Chronological (oldest-first) volume history for one exercise, each point
@@ -973,7 +1246,7 @@ function getExerciseTrend(exerciseName){
   [...history].reverse().forEach(entry => {
     const ex = entry.exercises.find(e => e.name.trim().toLowerCase() === key);
     if(ex && ex.sets.length){
-      points.push({ date: entry.date, volume: computeSetVolume(ex.sets) });
+      points.push({ date: entry.date, volume: computeSetVolume(ex.sets, ex.bodyweight) });
     }
   });
   return points.map((p, i) => {
@@ -1137,7 +1410,7 @@ progressExerciseSelect.addEventListener('change', (e) => renderProgressForExerci
 // arithmetic, not feature state) so the visual language stays consistent.
 
 function totalLoadForEntry(entry){
-  return entry.exercises.reduce((sum, ex) => sum + computeSetVolume(ex.sets), 0);
+  return entry.exercises.reduce((sum, ex) => sum + computeSetVolume(ex.sets, ex.bodyweight), 0);
 }
 
 // Sunday-start week boundary — matches the calendar's own S M T W T F S layout.
@@ -1786,11 +2059,25 @@ function sheetTitleForDate(iso){
   return `${d.getDate()} ${MONTH_SHORT[d.getMonth()]} ${d.getFullYear()}`;
 }
 
+// Reps/Weight cells join one value per set with "+", same as always — a
+// set with drop-set continuations instead joins that set's own stages
+// (main + each drop) with "/" within its own slot, so "12/8/5+10+8" reads
+// as "set 1 dropped 12→8→5, set 2 was a plain 10, set 3 was a plain 8". A
+// set with no drops produces the exact same string as before (no "/").
+// Set Time / Rest Time are left blank for the whole exercise unless at
+// least one of its sets actually used the timer, so a sheet nobody uses
+// that feature on stays exactly as clean as it always was.
 function exerciseRowsForEntry(entry){
   return entry.exercises.map(ex => {
-    const reps = ex.sets.map(s => s.reps === '' ? '-' : s.reps).join('+');
-    const weight = ex.sets.map(s => s.weight === '' ? '-' : s.weight).join('+');
-    return [ex.name, ex.sets.length, reps, weight, ex.muscle || ''];
+    const reps = ex.sets.map(s => setStages(s).map(st => st.reps === '' ? '-' : st.reps).join('/')).join('+');
+    const weight = ex.sets.map(s => setStages(s).map(st => st.weight === '' ? '-' : st.weight).join('/')).join('+');
+    const hasTiming = ex.sets.some(s => s.setDurationMs || s.restBeforeMs != null);
+    const setTimes = hasTiming ? ex.sets.map(s => s.setDurationMs ? fmtShort(s.setDurationMs) : '-').join('+') : '';
+    const restTimes = hasTiming ? ex.sets.map(s => s.restBeforeMs != null ? fmtShort(s.restBeforeMs) : '-').join('+') : '';
+    // Column F is skipped ('') since F1/F2 are reserved for the day's total
+    // duration, written separately by writeDurationCell — never part of
+    // these per-exercise rows.
+    return [ex.name, ex.sets.length, reps, weight, ex.muscle || '', '', ex.bodyweight ? 'Bodyweight' : '', setTimes, restTimes];
   });
 }
 
@@ -1804,9 +2091,20 @@ async function ensureMuscleHeader(token, title){
   );
 }
 
+// Same idempotent-migration pattern as ensureMuscleHeader, for the three
+// columns added by drop sets / bodyweight / the per-set timer. G/H/I are
+// used (not F) since F1:F2 already hold the day's total duration.
+async function ensureExtraHeaders(token, title){
+  await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`'${title}'!G1:I1`)}?valueInputOption=USER_ENTERED`,
+    { method:'PUT', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values:[['Type','Set Time','Rest Time']] }) }
+  );
+}
+
 async function ensureDateSheet(token, title){
   if(sheetMetaCache && sheetMetaCache[title] != null){
     await ensureMuscleHeader(token, title);
+    await ensureExtraHeaders(token, title);
     return sheetMetaCache[title];
   }
 
@@ -1826,6 +2124,7 @@ async function ensureDateSheet(token, title){
     { method:'PUT', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values:[['Exercise','Sets','Reps',`Weight (${unit})`,'Muscle']] }) }
   );
   if(!headerRes.ok) throw new Error('Failed to write header for "' + title + '" (' + headerRes.status + ')');
+  await ensureExtraHeaders(token, title);
 
   await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
     method:'POST',
@@ -2090,11 +2389,36 @@ async function restoreFromSheet(){
       const exercises = rows.filter(r => r[0]).map(r => {
         const repsParts = (r[2] || '').split('+');
         const weightParts = (r[3] || '').split('+');
-        const sets = repsParts.map((rp, i) => ({
-          reps: (rp === '-' || rp === '') ? '' : Number(rp),
-          weight: (weightParts[i] === '-' || weightParts[i] == null || weightParts[i] === '') ? '' : Number(weightParts[i])
-        }));
-        return { name: r[0], muscle: r[4] || '', sets };
+        const setTimeParts = (r[7] || '').split('+');
+        const restTimeParts = (r[8] || '').split('+');
+        const sets = repsParts.map((rp, i) => {
+          // A set's own slot may itself be "/"-joined drop-set stages
+          // (main + each drop) — a plain set has just one stage, so this
+          // reconstructs identically to before whenever there's no "/".
+          const repStages = rp.split('/');
+          const weightStages = (weightParts[i] || '').split('/');
+          const mainReps = repStages[0], mainWeight = weightStages[0];
+          const set = {
+            reps: (mainReps === '-' || mainReps === '' || mainReps == null) ? '' : Number(mainReps),
+            weight: (mainWeight === '-' || mainWeight == null || mainWeight === '') ? '' : Number(mainWeight)
+          };
+          if(repStages.length > 1){
+            const drops = repStages.slice(1).map((dr, di) => {
+              const dw = weightStages[di + 1];
+              return {
+                reps: (dr === '-' || dr === '') ? '' : Number(dr),
+                weight: (dw === '-' || dw == null || dw === '') ? '' : Number(dw)
+              };
+            });
+            if(drops.length) set.drops = drops;
+          }
+          const setTimeMs = parseShortToMs(setTimeParts[i]);
+          if(setTimeMs != null) set.setDurationMs = setTimeMs;
+          const restTimeMs = parseShortToMs(restTimeParts[i]);
+          if(restTimeMs != null) set.restBeforeMs = restTimeMs;
+          return set;
+        });
+        return { name: r[0], muscle: r[4] || '', bodyweight: r[6] === 'Bodyweight', sets };
       });
       if(exercises.length === 0) return;
 
@@ -2109,7 +2433,7 @@ async function restoreFromSheet(){
   if(restored.length){
     history = mergeHistoryByDay(history.concat(restored));
     saveHistory();
-    restored.forEach(entry => entry.exercises.forEach(ex => rememberExercise(ex.name, ex.muscle)));
+    restored.forEach(entry => entry.exercises.forEach(ex => rememberExercise(ex.name, ex.muscle, ex.bodyweight)));
     renderHistory();
     renderCalendar();
     renderProgress();

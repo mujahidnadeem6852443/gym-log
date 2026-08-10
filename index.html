@@ -247,6 +247,40 @@
     border:1px dashed var(--accent-dim); font-size:20px; font-weight:800; padding:9px; border-radius:8px;
   }
   .add-exercise-btn{width:100%; padding:15px; font-size:15px; background:var(--panel); border:1px dashed var(--line); color:var(--text);}
+
+  /* Bodyweight toggle */
+  .bodyweight-toggle{
+    display:flex; align-items:center; gap:7px; font-size:12px; font-weight:700;
+    color:var(--text); text-transform:uppercase; letter-spacing:0.5px; margin:0 0 10px 2px; cursor:pointer;
+  }
+  .bodyweight-toggle input{width:15px; height:15px; accent-color:var(--blue);}
+  .bodyweight-tag{color:var(--green); background:rgba(95,216,143,0.14);}
+
+  /* Drop sets + per-set timer toolbar */
+  .set-tools{display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:-4px 0 10px 30px;}
+  .set-tool-btn{
+    background:var(--panel-2); border:1px solid var(--line); color:var(--muted);
+    font-size:11px; font-weight:700; padding:5px 9px; border-radius:7px;
+  }
+  .set-tool-btn.active{background:var(--accent-dim); border-color:var(--accent); color:var(--blue);}
+  .set-timer-btn.running{background:var(--green-dim); border-color:var(--green); color:var(--green);}
+  .set-timer-live{
+    font-family:var(--mono); font-size:12px; font-weight:700; color:var(--text);
+    background:var(--panel-2); border:1px solid var(--line); border-radius:7px; padding:5px 8px;
+  }
+  .set-rest-readout{font-family:var(--mono); font-size:12px; color:var(--muted); padding:5px 2px;}
+
+  .drop-stages{margin:-4px 0 10px 30px; padding-left:12px; border-left:2px solid var(--line);}
+  .drop-row{display:grid; grid-template-columns:22px 1fr 1fr 30px; gap:8px; align-items:center; margin-bottom:8px;}
+  .drop-num{font-family:var(--mono); color:var(--muted); font-size:12px; text-align:center;}
+  .add-drop-btn{
+    width:100%; background:transparent; color:var(--muted);
+    border:1px dashed var(--line); font-size:12px; font-weight:700; padding:7px; border-radius:7px;
+  }
+
+  .exercise-timing-summary{
+    font-family:var(--mono); font-size:11px; color:var(--muted); margin-top:8px;
+  }
   .save-workout-btn{width:100%; margin-top:14px; padding:16px; font-size:15px; letter-spacing:1px; text-transform:uppercase;}
   .empty-note{color:var(--text); font-size:13px; text-align:center; padding:20px 10px;}
 
