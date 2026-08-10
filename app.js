@@ -194,13 +194,16 @@ function formatSetsInline(sets){
   return sets.map(s => `${s.weight === '' ? '-' : s.weight}×${s.reps === '' ? '-' : s.reps}`).join(', ');
 }
 
-// One line of read-only set detail, e.g. "Set 1:  12 reps  ×  60" — with
-// any drop-set continuations appended as "  ⤵ 8×50  ⤵ 5×40". A plain set
-// (no drops) renders exactly as before.
+// One line of read-only set detail, e.g. "Set 1:  12 reps  ×  60 kg" — with
+// any drop-set continuations appended as "  ⤵ 8×50 kg  ⤵ 5×40 kg". Weight
+// carries whichever unit is currently selected (kg/lb); a blank weight (a
+// bodyweight set with nothing added) stays a plain "-", no unit.
 function formatSetLine(set, idx){
-  let text = `Set ${idx+1}:  ${set.reps === '' ? '-' : set.reps} reps  ×  ${set.weight === '' ? '-' : set.weight}`;
+  const unit = getWeightUnit();
+  const withUnit = (w) => w === '' ? '-' : `${w} ${unit}`;
+  let text = `Set ${idx+1}:  ${set.reps === '' ? '-' : set.reps} reps  ×  ${withUnit(set.weight)}`;
   if(set.drops && set.drops.length){
-    text += set.drops.map(d => `  ⤵ ${d.reps === '' ? '-' : d.reps}×${d.weight === '' ? '-' : d.weight}`).join('');
+    text += set.drops.map(d => `  ⤵ ${d.reps === '' ? '-' : d.reps}×${withUnit(d.weight)}`).join('');
   }
   return text;
 }
