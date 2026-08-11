@@ -13,7 +13,10 @@ const K_SESSION_STARTED = 'gymlog_session_started';
 const SESSION_MAX_MS = 3 * 60 * 60 * 1000; // 3 hours — a full workout should never need to reconnect
 const K_PENDING_DELETES = 'gymlog_pending_deletes';
 const K_EXERCISE_DICT = 'gymlog_exercise_dict';
+const K_ACTIVE_IDENTITY = 'gymlog_active_identity';
+const LOCAL_IDENTITY = '__local__'; // signed-out / never-signed-in device data
 function sheetIdKey(email){ return 'gymlog_sheet_id_' + email; }
+function identityBackupKey(identity){ return 'gymlog_identity_backup_' + identity; }
 
 // ---------- State ----------
 let current = loadCurrent();
@@ -44,6 +47,83 @@ function saveExerciseDict(list){ localStorage.setItem(K_EXERCISE_DICT, JSON.stri
 function uid(){ return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2,10)); }
 function getWeightUnit(){ return localStorage.getItem(K_WEIGHT_UNIT) || 'kg'; }
 function getDisplayName(){ return (localStorage.getItem(K_DISPLAY_NAME) || '').trim(); }
+
+// ---------- Per-account local data isolation ----------
+// history/current/pendingDeletes/displayName all belong to whichever
+// identity is currently active — a specific Google account's email, or
+// LOCAL_IDENTITY when signed out. Switching identities archives the
+// outgoing one's data under its own key and loads the incoming one's, so
+// two accounts' workouts can never sit in the active slot together, even
+// transiently. Weight unit and the exercise-name dictionary stay device-
+// level (not per-account) — deliberately: they're low-stakes UI/autocomplete
+// convenience, not personal workout data.
+function getActiveIdentity(){ return localStorage.getItem(K_ACTIVE_IDENTITY) || LOCAL_IDENTITY; }
+
+function archiveActiveIdentityData(identity){
+  const blob = { history, current, pendingDeletes: loadPendingDeletes(), displayName: getDisplayName() };
+  localStorage.setItem(identityBackupKey(identity), JSON.stringify(blob));
+}
+
+function loadIdentityBackup(identity){
+  try{
+    const raw = localStorage.getItem(identityBackupKey(identity));
+    if(raw) return JSON.parse(raw);
+  }catch(e){}
+  return null;
+}
+
+// IDs (falling back to a bare id) an entry is known under — same fallback
+// used everywhere else duplicate-workout detection happens.
+function entryIds(entry){
+  return (entry.mergedIds && entry.mergedIds.length) ? entry.mergedIds : [entry.id];
+}
+
+// Archives whatever's currently active under the outgoing identity, then
+// loads the incoming identity's own data. Returns true only when a real
+// switch happened, so callers can decide whether to also fetch fresh data
+// from that account's Sheet.
+//
+// Special case: switching FROM local-only (LOCAL_IDENTITY) TO a real
+// account does NOT archive-and-replace — local-only data is "unclaimed"
+// and merges into whichever account you next sign into, exactly like the
+// existing "log workouts locally, then sign in for the first time and
+// they sync up" flow already worked before per-account isolation existed.
+// It merges (rather than fully replacing) even if that account has been
+// used on this device before, so nothing freshly logged locally is ever
+// silently dropped by signing in.
+function switchActiveIdentity(newIdentity){
+  const oldIdentity = getActiveIdentity();
+  if(oldIdentity === newIdentity) return false;
+
+  if(oldIdentity === LOCAL_IDENTITY){
+    const backup = loadIdentityBackup(newIdentity);
+    if(backup){
+      const known = new Set();
+      (backup.history || []).forEach(h => entryIds(h).forEach(id => known.add(id)));
+      const unclaimed = history.filter(h => !entryIds(h).some(id => known.has(id)));
+      history = (backup.history || []).concat(unclaimed);
+      savePendingDeletes(loadPendingDeletes().concat(backup.pendingDeletes || []));
+      if(!getDisplayName() && backup.displayName) localStorage.setItem(K_DISPLAY_NAME, backup.displayName);
+      // current (the in-progress draft) deliberately keeps whatever's
+      // active locally right now rather than being overwritten by a
+      // possibly-stale draft from that account's last session elsewhere.
+    }
+    // No backup at all: this account has never been used on this device —
+    // the local-only history already active simply becomes its history.
+  } else {
+    archiveActiveIdentityData(oldIdentity);
+    const backup = loadIdentityBackup(newIdentity);
+    history = (backup && backup.history) || [];
+    current = (backup && backup.current) || { exercises: [] };
+    savePendingDeletes((backup && backup.pendingDeletes) || []);
+    localStorage.setItem(K_DISPLAY_NAME, (backup && backup.displayName) || '');
+  }
+
+  saveHistory();
+  saveCurrent();
+  localStorage.setItem(K_ACTIVE_IDENTITY, newIdentity);
+  return true;
+}
 
 // Strip any HTML-ish characters from free-text before it goes into the sheet or DOM.
 function sanitizeText(str){ return String(str == null ? '' : str).replace(/[<>]/g, '').slice(0, 200); }
@@ -1803,6 +1883,29 @@ function clearSession(){
   localStorage.removeItem(K_ACCESS_TOKEN);
   localStorage.removeItem(K_TOKEN_EXPIRY);
   localStorage.removeItem(K_SESSION_STARTED);
+
+  // Signing out (or timing out) returns this device to its own local-only
+  // data — the signed-in account's workouts are archived first, so nothing
+  // is lost, but they must not keep showing once nobody's signed in. Pure
+  // data reset only — this runs during early script init too (the 3-hour
+  // session check below), before the UI is ready to re-render; callers
+  // that fire later (sign-out click, the timeout interval) call
+  // refreshAfterIdentitySwitch() themselves right after this.
+  switchActiveIdentity(LOCAL_IDENTITY);
+}
+
+// Re-renders every view that depends on the active identity's data — call
+// after any switchActiveIdentity() that happens once the UI is already up
+// (not during the early session-restore check at script init, which is
+// followed by the normal Init-section render pass anyway).
+function refreshAfterIdentitySwitch(){
+  displayNameInput.value = getDisplayName();
+  renderBrandGreeting();
+  renderExercises();
+  renderHistory();
+  renderCalendar();
+  renderProgress();
+  renderAttendance();
 }
 
 // Restore a still-valid token across reloads/relaunches — skips reconnect
@@ -1928,6 +2031,7 @@ signOutBtn.addEventListener('click', () => {
     google.accounts.oauth2.revoke(accessToken, () => {});
   }
   clearSession();
+  refreshAfterIdentitySwitch();
   updateAuthUI();
 });
 
@@ -1936,6 +2040,7 @@ signOutBtn.addEventListener('click', () => {
 setInterval(() => {
   if(userEmail && sessionExpired()){
     clearSession();
+    refreshAfterIdentitySwitch();
     updateAuthUI();
     setSyncStatus('', 'Signed out after 3 hours — sign in again to keep syncing.');
   }
@@ -1983,18 +2088,34 @@ async function afterSignIn(){
     const infoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers:{ Authorization: 'Bearer ' + accessToken } });
     if(!infoRes.ok) throw new Error('Could not read account info (' + infoRes.status + ')');
     const info = await infoRes.json();
-    userEmail = info.email;
+    const newEmail = info.email;
+
+    // Swaps the active local data to this account's own — archiving
+    // whatever was active before (or merging it in, if it was unclaimed
+    // local-only data) so this account's view can never end up mixed with
+    // a different one's. See switchActiveIdentity for the exact rules.
+    const wasSwitch = switchActiveIdentity(newEmail);
+    userEmail = newEmail;
     userPicture = info.picture || null;
     localStorage.setItem(K_LAST_EMAIL, userEmail);
     localStorage.setItem(K_USER_PICTURE, userPicture || '');
+    refreshAfterIdentitySwitch();
     updateAuthUI();
     setSyncStatus('ok', 'Signed in. Preparing your Google Sheet…');
     await ensureSpreadsheet();
 
+    // Convert any date tabs still in the old one-row-per-exercise format to
+    // the current one-row-per-set format — automatic, every sign-in, so
+    // nothing logged before this update stays behind in the old layout.
+    // Awaited (not fire-and-forget) so it can't race the sync below into
+    // migrating the same tab twice at once; best-effort per tab regardless,
+    // so a single tab failing here never blocks the rest of sign-in.
+    try{ await migrateAllDateSheets(accessToken); } catch(e){ /* retried next sign-in */ }
+
     // Adopt a display name automatically the first time this device signs
     // in: prefer whatever name is already saved in the Sheet (set from
     // another device), falling back to the Google account's own name.
-    // Never overwrites a name already entered locally.
+    // Never overwrites a name already entered locally / already claimed.
     if(!getDisplayName()){
       const sheetName = await readDisplayNameFromSheet(accessToken).catch(() => null);
       const fallbackName = sheetName || info.name || '';
@@ -2008,22 +2129,25 @@ async function afterSignIn(){
     }
     updateAuthUI();
 
-    const hasRemoteTabs = sheetMetaCache && Object.keys(sheetMetaCache).some(t => t !== 'Overview');
-    if(history.length === 0 && hasRemoteTabs){
-      // Genuinely new device (no local history yet, but the account already
-      // has data) — also adopt the weight unit already used on the account,
-      // rather than leaving this device on the "kg" default regardless of
-      // what was chosen elsewhere.
+    if(history.length === 0){
+      // Nothing local for this identity at all yet — also adopt the weight
+      // unit already used on the account, rather than leaving this device
+      // on the "kg" default regardless of what was chosen elsewhere.
       const sheetUnit = await readWeightUnitFromSheet(accessToken).catch(() => null);
       if(sheetUnit){ localStorage.setItem(K_WEIGHT_UNIT, sheetUnit); updateAuthUI(); renderExercises(); }
-
-      if(confirm('We found existing workouts in your Google Sheet. Restore them to this device?')){
-        setSyncStatus('ok', 'Restoring…');
-        const count = await restoreFromSheet();
-        setSyncStatus('ok', count > 0 ? `Restored ${count} workout${count===1?'':'s'} from your Sheet.` : 'Nothing to restore.');
-      }
     } else {
       syncWeightUnitToSheet(accessToken).catch(() => {});
+    }
+
+    if(wasSwitch){
+      // A different identity is now active (a different account, or this
+      // device's local-only data was just claimed by an account for the
+      // first time) — automatically pull in whatever's already on that
+      // account's Sheet and show it. No confirmation step: the merge here
+      // is always additive (matches by workout id), never destructive.
+      setSyncStatus('ok', 'Fetching your data…');
+      const count = await restoreFromSheet();
+      setSyncStatus('ok', count > 0 ? `Loaded ${count} workout${count===1?'':'s'} from your Sheet.` : 'Signed in — up to date.');
     }
 
     await flushStalePendingDeletes();
@@ -2043,6 +2167,7 @@ function isAuthError(err){
 async function getValidToken(){
   if(userEmail && sessionExpired()){
     clearSession();
+    refreshAfterIdentitySwitch();
     updateAuthUI();
     throw new Error('login_required');
   }
@@ -2185,52 +2310,205 @@ function sheetTitleForDate(iso){
   return `${d.getDate()} ${MONTH_SHORT[d.getMonth()]} ${d.getFullYear()}`;
 }
 
-// Reps/Weight cells join one value per set with "+", same as always — a
-// set with drop-set continuations instead joins that set's own stages
-// (main + each drop) with "/" within its own slot, so "12/8/5+10+8" reads
-// as "set 1 dropped 12→8→5, set 2 was a plain 10, set 3 was a plain 8". A
-// set with no drops produces the exact same string as before (no "/").
-// Set Time / Rest Time are left blank for the whole exercise unless at
-// least one of its sets actually used the timer, so a sheet nobody uses
-// that feature on stays exactly as clean as it always was.
+// One row per SET: Exercise | Set | Reps | Weight | Set Time | Rest Time |
+// Muscle | Type. A set's own Reps/Weight cell is still "/"-joined for any
+// drop-set continuations (main stage + each drop) — a drop set genuinely
+// is one set with stages — but nothing is packed *across* sets anymore,
+// unlike the old one-row-per-exercise layout.
+function newHeaderRow(){
+  return ['Exercise', 'Set', 'Reps', `Weight (${getWeightUnit().toUpperCase()})`, 'Set Time', 'Rest Time', 'Muscle', 'Type'];
+}
 function exerciseRowsForEntry(entry){
-  return entry.exercises.map(ex => {
-    const reps = ex.sets.map(s => setStages(s).map(st => st.reps === '' ? '-' : st.reps).join('/')).join('+');
-    const weight = ex.sets.map(s => setStages(s).map(st => st.weight === '' ? '-' : st.weight).join('/')).join('+');
-    const hasTiming = ex.sets.some(s => s.setDurationMs || s.restBeforeMs != null);
-    const setTimes = hasTiming ? ex.sets.map(s => s.setDurationMs ? fmtShort(s.setDurationMs) : '-').join('+') : '';
-    const restTimes = hasTiming ? ex.sets.map(s => s.restBeforeMs != null ? fmtShort(s.restBeforeMs) : '-').join('+') : '';
-    // Column F is skipped ('') since F1/F2 are reserved for the day's total
-    // duration, written separately by writeDurationCell — never part of
-    // these per-exercise rows.
-    return [ex.name, ex.sets.length, reps, weight, ex.muscle || '', '', ex.bodyweight ? 'Bodyweight' : '', setTimes, restTimes];
+  const rows = [];
+  entry.exercises.forEach(ex => {
+    ex.sets.forEach((s, i) => {
+      const reps = setStages(s).map(st => st.reps === '' ? '-' : st.reps).join('/');
+      const weight = setStages(s).map(st => st.weight === '' ? '-' : st.weight).join('/');
+      const setTime = s.setDurationMs ? fmtShort(s.setDurationMs) : '-';
+      const restTime = s.restBeforeMs != null ? fmtShort(s.restBeforeMs) : '-';
+      rows.push([ex.name, i + 1, reps, weight, setTime, restTime, ex.muscle || '', ex.bodyweight ? 'Bodyweight' : '']);
+    });
+  });
+  return rows;
+}
+
+// Writes a note (or clears it) on column A of a contiguous row range in one
+// batch call — the shared primitive behind both tagging a freshly-appended
+// entry (one uniform note) and re-tagging a migrated tab (a different note
+// per row, since migrated rows came from different original workouts).
+async function writeRowNotes(token, sheetId, startRow, endRow, notes){
+  const rows = notes.map(note => ({ values: [ note ? { note } : {} ] }));
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+    method:'POST',
+    headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
+    body: JSON.stringify({ requests:[ {
+      updateCells:{
+        range:{ sheetId, startRowIndex:startRow-1, endRowIndex:endRow, startColumnIndex:0, endColumnIndex:1 },
+        rows,
+        fields:'note'
+      }
+    } ] })
   });
 }
 
-// Writes "Muscle" into E1 unconditionally — cheap, idempotent, and it's how
-// tabs created before this column existed get migrated the next time
-// they're synced to, without needing to track which tabs still need it.
-async function ensureMuscleHeader(token, title){
-  await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`'${title}'!E1`)}?valueInputOption=USER_ENTERED`,
-    { method:'PUT', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values:[['Muscle']] }) }
-  );
+async function setHeaderBold(token, sheetId){
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+    method:'POST',
+    headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
+    body: JSON.stringify({ requests:[ {
+      repeatCell:{
+        range:{ sheetId, startRowIndex:0, endRowIndex:1 },
+        cell:{ userEnteredFormat:{ textFormat:{ bold:true } } },
+        fields:'userEnteredFormat.textFormat.bold'
+      }
+    } ] })
+  });
 }
 
-// Same idempotent-migration pattern as ensureMuscleHeader, for the three
-// columns added by drop sets / bodyweight / the per-set timer. G/H/I are
-// used (not F) since F1:F2 already hold the day's total duration.
-async function ensureExtraHeaders(token, title){
-  await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`'${title}'!G1:I1`)}?valueInputOption=USER_ENTERED`,
-    { method:'PUT', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values:[['Type','Set Time','Rest Time']] }) }
+// Converts an existing date tab still in the old one-row-per-exercise
+// format into the new one-row-per-set format, in place — automatically,
+// the first time that tab is touched after this update. Nothing already
+// logged is at risk: everything is read and fully reconstructed in memory
+// first, written to a temporary staging tab, and only once that staging
+// tab is completely written and re-tagged does the old tab get removed and
+// the staging tab renamed into its place. A failure at any point leaves
+// either the untouched original tab, or both the original and a retryable
+// staging tab — never a half-rewritten original.
+async function migrateDateSheetIfNeeded(token, title){
+  const headerRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`'${title}'!A1:H1`)}`,
+    { headers:{ Authorization:'Bearer '+token } }
   );
+  if(!headerRes.ok) return; // best-effort — leave it for the next sync to retry
+  const headerData = await headerRes.json();
+  const header = (headerData.values && headerData.values[0]) || [];
+  if(header[1] === 'Set') return; // already new format
+  if(header.length === 0) return; // not a recognizable date tab — leave alone
+
+  const fullRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}` +
+    `?ranges=${encodeURIComponent(`'${title}'!A1:I5000`)}` +
+    `&fields=${encodeURIComponent('sheets.data.rowData.values(formattedValue,note)')}`,
+    { headers:{ Authorization:'Bearer '+token } }
+  );
+  if(!fullRes.ok) return;
+  const fullData = await fullRes.json();
+  const rowData = (fullData.sheets && fullData.sheets[0] && fullData.sheets[0].data && fullData.sheets[0].data[0] && fullData.sheets[0].data[0].rowData) || [];
+
+  // Old Duration cell (F2, row index 1) — carried over to the new J1/J2 spot.
+  const oldDurationCell = rowData[1] && rowData[1].values && rowData[1].values[5];
+  const durationText = (oldDurationCell && oldDurationCell.formattedValue) || null;
+
+  const newRows = [];
+  const newNotes = [];
+  rowData.slice(1).forEach(rd => {
+    const cells = (rd.values || []).map(c => (c && c.formattedValue) || '');
+    const note = (rd.values && rd.values[0] && rd.values[0].note) || null;
+    if(!cells[0]) return; // fully blank row
+    if(/^—/.test(cells[0])){
+      newRows.push([cells[0], '', '', '', '', '', '', '']);
+      newNotes.push(null);
+      return;
+    }
+    const name = cells[0];
+    const muscle = cells[4] || '';
+    const type = cells[6] || '';
+    const repsParts = (cells[2] || '').split('+');
+    const weightParts = (cells[3] || '').split('+');
+    const setTimeParts = (cells[7] || '').split('+');
+    const restTimeParts = (cells[8] || '').split('+');
+    repsParts.forEach((rp, i) => {
+      newRows.push([
+        name, i + 1, rp, weightParts[i] || '-', setTimeParts[i] || '-', restTimeParts[i] || '-', muscle, type
+      ]);
+      newNotes.push(note);
+    });
+  });
+
+  const tempTitle = title + ' (migrating)';
+  if(sheetMetaCache && sheetMetaCache[tempTitle] != null){
+    // Leftover from a previously interrupted migration attempt — the
+    // original tab is still intact (we never got as far as removing it),
+    // so it's safe to discard this stale attempt and redo it cleanly.
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+      method:'POST', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
+      body: JSON.stringify({ requests:[ { deleteSheet:{ sheetId: sheetMetaCache[tempTitle] } } ] })
+    });
+    delete sheetMetaCache[tempTitle];
+  }
+
+  const addRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+    method:'POST', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
+    body: JSON.stringify({ requests:[ { addSheet:{ properties:{ title: tempTitle, gridProperties:{ frozenRowCount:1 } } } } ] })
+  });
+  if(!addRes.ok) throw new Error('Migration: could not stage "' + title + '" (' + addRes.status + ')');
+  const added = await addRes.json();
+  const tempSheetId = added.replies[0].addSheet.properties.sheetId;
+  if(!sheetMetaCache) sheetMetaCache = {};
+  sheetMetaCache[tempTitle] = tempSheetId;
+
+  const headerWriteRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`'${tempTitle}'!A1:H1`)}?valueInputOption=USER_ENTERED`,
+    { method:'PUT', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values:[ newHeaderRow() ] }) }
+  );
+  if(!headerWriteRes.ok) throw new Error('Migration: could not write header for "' + title + '"');
+
+  if(newRows.length){
+    const appendRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`'${tempTitle}'!A1`)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+      { method:'POST', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values: newRows }) }
+    );
+    if(!appendRes.ok) throw new Error('Migration: could not write rows for "' + title + '"');
+    const appendData = await appendRes.json();
+    const updatedRange = appendData.updates && appendData.updates.updatedRange;
+    const m = /!A(\d+):[A-Za-z]+(\d+)/.exec(updatedRange || '');
+    if(m) await writeRowNotes(token, tempSheetId, parseInt(m[1], 10), parseInt(m[2], 10), newNotes);
+  }
+
+  if(durationText){
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`, {
+      method:'POST', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
+      body: JSON.stringify({ valueInputOption:'USER_ENTERED', data:[
+        { range:`'${tempTitle}'!J1`, values:[['Duration']] },
+        { range:`'${tempTitle}'!J2`, values:[[durationText]] }
+      ] })
+    });
+  }
+
+  await setHeaderBold(token, tempSheetId);
+
+  // Everything is staged and verified — safe to remove the old tab and
+  // rename the staging tab into its place, in one atomic batch.
+  const oldSheetId = sheetMetaCache[title];
+  const swapRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+    method:'POST', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
+    body: JSON.stringify({ requests:[
+      { deleteSheet:{ sheetId: oldSheetId } },
+      { updateSheetProperties:{ properties:{ sheetId: tempSheetId, title }, fields:'title' } }
+    ] })
+  });
+  if(!swapRes.ok) throw new Error('Migration: could not finalize "' + title + '"');
+
+  sheetMetaCache[title] = tempSheetId;
+  delete sheetMetaCache[tempTitle];
+}
+
+// Runs migration across every existing date tab (skipping Overview and the
+// two aggregate tabs) — called once per sign-in/sync so nothing logged
+// before this update is left behind in the old format.
+async function migrateAllDateSheets(token){
+  if(!sheetMetaCache) await loadSheetMeta(token);
+  const skip = new Set(['Overview', 'Weekly Progress', 'Monthly Progress']);
+  const titles = Object.keys(sheetMetaCache).filter(t => !skip.has(t) && !t.endsWith(' (migrating)'));
+  for(const title of titles){
+    try{ await migrateDateSheetIfNeeded(token, title); }
+    catch(e){ /* best-effort — this tab is retried on the next sign-in/sync */ }
+  }
 }
 
 async function ensureDateSheet(token, title){
   if(sheetMetaCache && sheetMetaCache[title] != null){
-    await ensureMuscleHeader(token, title);
-    await ensureExtraHeaders(token, title);
+    await migrateDateSheetIfNeeded(token, title);
     return sheetMetaCache[title];
   }
 
@@ -2243,26 +2521,13 @@ async function ensureDateSheet(token, title){
   const added = await addRes.json();
   const sheetId = added.replies[0].addSheet.properties.sheetId;
 
-  const unit = getWeightUnit().toUpperCase();
-  const headerRange = `'${title}'!A1:E1`;
+  const headerRange = `'${title}'!A1:H1`;
   const headerRes = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(headerRange)}?valueInputOption=USER_ENTERED`,
-    { method:'PUT', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values:[['Exercise','Sets','Reps',`Weight (${unit})`,'Muscle']] }) }
+    { method:'PUT', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ values:[ newHeaderRow() ] }) }
   );
   if(!headerRes.ok) throw new Error('Failed to write header for "' + title + '" (' + headerRes.status + ')');
-  await ensureExtraHeaders(token, title);
-
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
-    method:'POST',
-    headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
-    body: JSON.stringify({ requests:[ {
-      repeatCell:{
-        range:{ sheetId, startRowIndex:0, endRowIndex:1 },
-        cell:{ userEnteredFormat:{ textFormat:{ bold:true } } },
-        fields:'userEnteredFormat.textFormat.bold'
-      }
-    } ] })
-  });
+  await setHeaderBold(token, sheetId);
 
   if(!sheetMetaCache) sheetMetaCache = {};
   sheetMetaCache[title] = sheetId;
@@ -2277,22 +2542,12 @@ async function tagRowsWithWorkoutId(token, sheetId, updatedRange, workoutId){
   if(!m) return;
   const start = parseInt(m[1], 10);
   const end = parseInt(m[2], 10);
-  const rows = Array.from({ length: end - start + 1 }, () => ({ values:[ { note:'wk:' + workoutId } ] }));
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
-    method:'POST',
-    headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
-    body: JSON.stringify({ requests:[ {
-      updateCells:{
-        range:{ sheetId, startRowIndex:start-1, endRowIndex:end, startColumnIndex:0, endColumnIndex:1 },
-        rows,
-        fields:'note'
-      }
-    } ] })
-  });
+  await writeRowNotes(token, sheetId, start, end, Array.from({ length: end - start + 1 }, () => 'wk:' + workoutId));
 }
 
-// F1/F2 hold the day's total workout duration — separate from the A:E
-// exercise table so it never collides with existing rows/columns there.
+// J1/J2 hold the day's total workout duration — separate from the A:H
+// exercise table so it never collides with it (column F now holds Rest
+// Time, where Duration used to live before the one-row-per-set redesign).
 // Written unconditionally (even to "00:00:00") every sync so it always
 // reflects entry.durationMs, including for a duration-only save with no
 // exercises yet.
@@ -2303,8 +2558,8 @@ async function writeDurationCell(token, title, durationMs){
     body: JSON.stringify({
       valueInputOption:'USER_ENTERED',
       data:[
-        { range:`'${title}'!F1`, values:[['Duration']] },
-        { range:`'${title}'!F2`, values:[[fmt(durationMs || 0)]] }
+        { range:`'${title}'!J1`, values:[['Duration']] },
+        { range:`'${title}'!J2`, values:[[fmt(durationMs || 0)]] }
       ]
     })
   });
@@ -2331,7 +2586,7 @@ async function syncEntry(token, entry){
   const rows = [];
   if(hasPriorSession){
     const time = new Date(entry.date).toLocaleTimeString(undefined, { hour:'2-digit', minute:'2-digit' });
-    rows.push([`— ${time} —`, '', '', '', '']);
+    rows.push([`— ${time} —`, '', '', '', '', '', '', '']);
   }
   rows.push(...exerciseRows);
 
@@ -2439,6 +2694,78 @@ function parseSeparatorTime(text){
   return { hours, minutes };
 }
 
+// Parses one wk:<id> group's rows for a tab still in the old one-row-per-
+// exercise format — kept only as the fallback for a tab that hasn't been
+// migrated yet (or a migration attempt that failed); every new sync writes
+// and reads the new format exclusively.
+function exercisesFromOldFormatRows(rows){
+  return rows.filter(r => r[0]).map(r => {
+    const repsParts = (r[2] || '').split('+');
+    const weightParts = (r[3] || '').split('+');
+    const setTimeParts = (r[7] || '').split('+');
+    const restTimeParts = (r[8] || '').split('+');
+    const sets = repsParts.map((rp, i) => {
+      const repStages = rp.split('/');
+      const weightStages = (weightParts[i] || '').split('/');
+      const mainReps = repStages[0], mainWeight = weightStages[0];
+      const set = {
+        reps: (mainReps === '-' || mainReps === '' || mainReps == null) ? '' : Number(mainReps),
+        weight: (mainWeight === '-' || mainWeight == null || mainWeight === '') ? '' : Number(mainWeight)
+      };
+      if(repStages.length > 1){
+        const drops = repStages.slice(1).map((dr, di) => {
+          const dw = weightStages[di + 1];
+          return { reps: (dr === '-' || dr === '') ? '' : Number(dr), weight: (dw == null || dw === '-') ? '' : Number(dw) };
+        });
+        if(drops.length) set.drops = drops;
+      }
+      const setTimeMs = parseShortToMs(setTimeParts[i]);
+      if(setTimeMs != null) set.setDurationMs = setTimeMs;
+      const restTimeMs = parseShortToMs(restTimeParts[i]);
+      if(restTimeMs != null) set.restBeforeMs = restTimeMs;
+      return set;
+    });
+    return { name: r[0], muscle: r[4] || '', bodyweight: r[6] === 'Bodyweight', sets };
+  });
+}
+
+// Parses one wk:<id> group's rows for a tab in the current one-row-per-set
+// format: a new exercise starts wherever the Set column reads 1 (or on the
+// very first row), and every following row until the next "Set 1" belongs
+// to that same exercise.
+function exercisesFromNewFormatRows(rows){
+  const exercises = [];
+  let currentEx = null;
+  rows.forEach(r => {
+    if(!r[0]) return;
+    const setNum = Number(r[1]) || 1;
+    if(setNum === 1 || !currentEx){
+      currentEx = { name: r[0], muscle: r[6] || '', bodyweight: r[7] === 'Bodyweight', sets: [] };
+      exercises.push(currentEx);
+    }
+    const repStages = (r[2] || '').split('/');
+    const weightStages = (r[3] || '').split('/');
+    const mainReps = repStages[0], mainWeight = weightStages[0];
+    const set = {
+      reps: (mainReps === '-' || mainReps === '' || mainReps == null) ? '' : Number(mainReps),
+      weight: (mainWeight === '-' || mainWeight == null || mainWeight === '') ? '' : Number(mainWeight)
+    };
+    if(repStages.length > 1){
+      const drops = repStages.slice(1).map((dr, di) => {
+        const dw = weightStages[di + 1];
+        return { reps: (dr === '-' || dr === '') ? '' : Number(dr), weight: (dw == null || dw === '-') ? '' : Number(dw) };
+      });
+      if(drops.length) set.drops = drops;
+    }
+    const setTimeMs = parseShortToMs(r[4]);
+    if(setTimeMs != null) set.setDurationMs = setTimeMs;
+    const restTimeMs = parseShortToMs(r[5]);
+    if(restTimeMs != null) set.restBeforeMs = restTimeMs;
+    currentEx.sets.push(set);
+  });
+  return exercises;
+}
+
 // Rebuilds local workout entries from whatever is currently sitting in the
 // Sheet, using the same "wk:<id>" row notes that power remote delete to
 // regroup rows back into distinct workouts — so a wiped phone or a brand
@@ -2491,25 +2818,35 @@ async function restoreFromSheet(){
     if(!dateParts) return;
 
     const rowData = (sheet.data && sheet.data[0] && sheet.data[0].rowData) || [];
-    // Duration lives in F2 (row index 1), independent of the exercise rows —
-    // only the first reconstructed group for this tab gets it, so merging
-    // same-day groups afterward doesn't double-count it.
-    const durationCell = rowData[1] && rowData[1].values && rowData[1].values[5];
+    const headerCells = ((rowData[0] && rowData[0].values) || []).map(c => (c && c.formattedValue) || '');
+    // New tabs are one-row-per-set (column B header "Set"); anything not yet
+    // migrated is still the old one-row-per-exercise format ("Sets") — read
+    // correctly either way, so a tab migration hasn't reached yet (or one
+    // that failed) is always still fully restorable.
+    const isNewFormat = headerCells[1] === 'Set';
+
+    // Duration lives at J2 in the new format, F2 in the old — independent of
+    // the exercise rows either way; only the first reconstructed group for
+    // this tab gets it, so merging same-day groups afterward doesn't
+    // double-count it.
+    const durationCell = isNewFormat
+      ? (rowData[1] && rowData[1].values && rowData[1].values[9])
+      : (rowData[1] && rowData[1].values && rowData[1].values[5]);
     const tabDurationMs = parseDurationToMs(durationCell && durationCell.formattedValue);
     let durationAssigned = false;
 
     const groups = [];
     let current = null;
     for(let i = 1; i < rowData.length; i++){ // row 0 is the header
-      const cells = rowData[i].values || [];
-      const note = cells[0] && cells[0].note;
+      const rawCells = rowData[i].values || [];
+      const note = rawCells[0] && rawCells[0].note;
       if(!note || !note.startsWith('wk:')){ current = null; continue; }
       const workoutId = note.slice(3);
       if(!current || current.workoutId !== workoutId){
         current = { workoutId, rows: [] };
         groups.push(current);
       }
-      current.rows.push(cells.map(c => (c && c.formattedValue) || ''));
+      current.rows.push(rawCells.map(c => (c && c.formattedValue) || ''));
     }
 
     groups.forEach(g => {
@@ -2520,40 +2857,7 @@ async function restoreFromSheet(){
       const sepTime = rows[0] && /^—/.test(rows[0][0]) ? parseSeparatorTime(rows[0][0]) : null;
       if(sepTime){ hh = sepTime.hours; mm = sepTime.minutes; rows = rows.slice(1); }
 
-      const exercises = rows.filter(r => r[0]).map(r => {
-        const repsParts = (r[2] || '').split('+');
-        const weightParts = (r[3] || '').split('+');
-        const setTimeParts = (r[7] || '').split('+');
-        const restTimeParts = (r[8] || '').split('+');
-        const sets = repsParts.map((rp, i) => {
-          // A set's own slot may itself be "/"-joined drop-set stages
-          // (main + each drop) — a plain set has just one stage, so this
-          // reconstructs identically to before whenever there's no "/".
-          const repStages = rp.split('/');
-          const weightStages = (weightParts[i] || '').split('/');
-          const mainReps = repStages[0], mainWeight = weightStages[0];
-          const set = {
-            reps: (mainReps === '-' || mainReps === '' || mainReps == null) ? '' : Number(mainReps),
-            weight: (mainWeight === '-' || mainWeight == null || mainWeight === '') ? '' : Number(mainWeight)
-          };
-          if(repStages.length > 1){
-            const drops = repStages.slice(1).map((dr, di) => {
-              const dw = weightStages[di + 1];
-              return {
-                reps: (dr === '-' || dr === '') ? '' : Number(dr),
-                weight: (dw === '-' || dw == null || dw === '') ? '' : Number(dw)
-              };
-            });
-            if(drops.length) set.drops = drops;
-          }
-          const setTimeMs = parseShortToMs(setTimeParts[i]);
-          if(setTimeMs != null) set.setDurationMs = setTimeMs;
-          const restTimeMs = parseShortToMs(restTimeParts[i]);
-          if(restTimeMs != null) set.restBeforeMs = restTimeMs;
-          return set;
-        });
-        return { name: r[0], muscle: r[4] || '', bodyweight: r[6] === 'Bodyweight', sets };
-      });
+      const exercises = isNewFormat ? exercisesFromNewFormatRows(rows) : exercisesFromOldFormatRows(rows);
       if(exercises.length === 0) return;
 
       const entryDate = new Date(dateParts.year, dateParts.month, dateParts.day, hh, mm);
@@ -2686,6 +2990,10 @@ async function syncAll(showAlerts){
     try{ await syncAttendanceSheets(token); } catch(e){ /* retried next sync */ }
     try{ await syncDisplayNameToSheet(token); } catch(e){ /* retried next sync */ }
     try{ await syncWeightUnitToSheet(token); } catch(e){ /* retried next sync */ }
+    // Catches any date tab that migrateAllDateSheets already covered at
+    // sign-in wouldn't reach again — cheap no-op per tab once migrated
+    // (a single header read), so running it on every sync costs little.
+    try{ await migrateAllDateSheets(token); } catch(e){ /* retried next sync */ }
 
     refreshSyncBadge();
     if(showAlerts){
