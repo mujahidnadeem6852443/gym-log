@@ -39,6 +39,37 @@ Exercises can contain as many sets as needed.
 
 Your current workout is automatically saved locally while you are entering it.
 
+### ⤵ Drop Sets
+
+Any set can be marked as a drop set — you finish it, drop the weight, and
+keep going without resting, and Gym Log tracks every stage of it.
+
+Tap **Drop Set** on a set to add a continuation (its own reps and weight),
+and **+ Add Drop** for another stage after that. Each stage shows inline
+everywhere sets are displayed:
+
+```text
+Set 1: 12 reps × 60 kg  ⤵ 8×50 kg  ⤵ 5×40 kg
+```
+
+Every stage counts toward that set's total volume, so a drop set correctly
+adds more to your Progress trend and weekly/monthly Attendance load than a
+plain set with the same top-line reps and weight would.
+
+### 🏋️ Bodyweight Exercises
+
+Push-ups, pull-ups, dips, and anything else where your body is the
+resistance get their own toggle. Check **Bodyweight Exercise** on any
+exercise and its weight field relabels to **Added Weight** — for sets
+where you're not adding anything extra, just leave it blank.
+
+Because Gym Log doesn't track your body weight itself (see **Future
+Ideas** below), a bodyweight set with no added weight counts its reps
+directly as its training load, so it still shows up meaningfully in
+Progress and Attendance instead of contributing zero. A set with added
+weight (e.g. a weighted pull-up) uses the normal reps × weight math on
+just that added weight.
+
 ### ⏱ Workout Timer
 
 Gym Log includes a built-in session stopwatch.
@@ -51,6 +82,39 @@ You can:
 - Save workout time independently from exercises
 
 Workout duration is stored with the day's workout and can also be synchronized to Google Sheets.
+
+### ⏲ Per-Set Timing
+
+Independent of the overall session stopwatch above, Gym Log can time each
+individual set and the rest before it.
+
+Tap **Start Set** when you begin a set and **Stop** when you finish — the
+button live-updates while running. The moment you stop, a **Resting**
+countdown appears on whichever set you're about to do next — even the
+first set of a new exercise — so rest is tracked continuously through your
+whole workout, not just within one exercise. Starting that next set
+finalizes the rest time.
+
+Every exercise shows a running summary once at least one of its sets has
+been timed:
+
+```text
+Set time: 03:12 · Rest time: 08:45
+```
+
+A few things worth knowing:
+
+- **Fully optional, and independent of each other.** Drop sets, bodyweight
+  exercises, and per-set timing don't depend on one another — use whichever
+  fit how you train, ignore the rest, and everything else behaves exactly
+  as it always did.
+- **Only one set can be timed at a time.** Starting a set automatically
+  stops whatever else was running, so there's never any ambiguity about
+  which set is currently being timed.
+- **Only the most recently stopped set can be resumed.** Once you've moved
+  on to a different set or exercise, the earlier one locks — it shows its
+  finalized time as plain text, so you can never accidentally resume
+  something you've already moved past.
 
 ### 📅 Workout Calendar
 
@@ -219,6 +283,21 @@ A few things worth knowing:
   sign-in — the auto-adopt only fills in a name when the device doesn't
   have one yet.
 
+### 🔒 Staying Signed In
+
+Signing in with Google stays signed in across reloads and closing/reopening
+the app — no repeated "Reconnect" taps just from putting your phone down
+mid-workout.
+
+- Your session lasts **up to 3 hours** from when you sign in — long enough
+  to cover a full workout — after which Gym Log automatically signs you
+  out and you'll need to sign in again.
+- Behind the scenes, the access token itself is reused across reloads
+  while it's still valid (usually under an hour), and Gym Log attempts a
+  silent, no-popup refresh past that — falling back to a manual
+  "Reconnect Google Account" tap only if your browser blocks the silent
+  attempt.
+
 ---
 
 ## 💾 Can I Use Gym Log Without Signing In?
@@ -233,7 +312,8 @@ Without signing in, Gym Log uses browser `localStorage`, so you can still:
 - Add exercises
 - Record sets, reps, and weight
 - Select muscle groups
-- Use the workout timer
+- Log drop sets and bodyweight exercises
+- Use the workout timer, and time individual sets and rest
 - Save workout duration
 - View history
 - Use the calendar
@@ -306,6 +386,25 @@ Two users' workouts do not mix into one Sheet.
 
 The same OAuth Client ID can be used by multiple authorized users, while each signed-in Google account accesses its own Drive and its own Gym Log data.
 
+### Switching accounts on the same device
+
+That same separation holds on-device too, if more than one Google account
+signs into Gym Log in the same browser — not just in the Sheet each
+account owns.
+
+- **Switching accounts automatically loads that account's data.** Sign
+  out of Account A and into Account B, and the app fetches Account B's
+  own Sheet and shows it — no confirmation prompt, and Account A's
+  workouts are never visible while Account B is signed in.
+- **Nothing is ever lost in the switch.** Account A's local data is set
+  aside (not deleted) the moment you switch away, and comes right back
+  the next time you sign into Account A on that device.
+- **Logging locally before your first sign-in still works exactly as
+  before.** If you use Gym Log without signing in and then sign in for
+  the first time, that local history becomes the new account's history
+  (and syncs up to its Sheet) rather than being treated as some other
+  account's leftover data.
+
 ---
 
 ## 📊 Google Sheet Structure
@@ -337,35 +436,57 @@ The `Overview` tab also holds your display name, in cell `B4` (with the
 label `Name` in `A4`, right below the intro text in `A1`/`A2`) — this is
 what lets your name follow your account across devices.
 
-Each daily tab contains a simple workout table:
+Each daily tab holds one row **per set**, not per exercise, so every cell
+holds exactly one value:
 
-| Exercise | Sets | Reps | Weight (KG) | Muscle |
-|----------|------|------|-------------|--------|
-| Cable Rows | 3 | 12+12+10 | 60+55+55 | Back |
-| Lat Pulldown | 3 | 10+10+8 | 65+65+70 | Back |
-| Bicep Curl | 3 | 12+10+8 | 12+14+14 | Biceps |
+| Exercise | Set | Reps | Weight (KG) | Set Time | Rest Time | Muscle | Type |
+|----------|-----|------|-------------|----------|-----------|--------|------|
+| Bench Press | 1 | 12/8/5 | 60/50/40 | 0:32 | - | Chest | |
+| Bench Press | 2 | 10 | 65 | 0:28 | 1:35 | Chest | |
+| Push Ups | 1 | 20 | - | - | - | Chest | Bodyweight |
+| Push Ups | 2 | 15 | 10 | - | - | Chest | Bodyweight |
 
-Reps and weights correspond set-for-set.
+Reading this table: **Bench Press, Set 1** was a drop set — 12 reps at 60 kg,
+dropped to 8 at 50 kg, dropped to 5 at 40 kg (the `/`-joined stages within
+that one set's own Reps/Weight cell — a drop set is still one set, just with
+continuations). It took 32 seconds. **Set 2** was a plain 10 reps at 65 kg,
+with 1 minute 35 seconds of rest beforehand. **Push Ups** is a separate
+exercise marked `Bodyweight`, so its first set (no added weight) shows a
+plain `-` in Weight.
 
-Example:
+**Set Time** and **Rest Time** read `-` for a set the timer wasn't used on.
+The very first set logged that day always has no Rest Time (nothing to rest
+from yet) — every set after does, including the first set of a new exercise,
+since rest is tracked continuously through the whole workout, not reset at
+each exercise boundary.
 
-```text
-Reps:
-12 + 12 + 10
+Workout duration is stored separately (`Duration` in column J of the tab) so
+it can also be restored on another device.
 
-Weight:
-60 + 55 + 55
-```
+### Existing data migrates automatically
 
-means:
+Gym Log used to store one row per **exercise**, with every set's reps and
+weight packed into the same cell (`"12+10"`, `"60+65"`). Any tab still in
+that older format is detected and converted the next time you sign in or
+sync — automatically, with no button to press and no data lost:
 
-```text
-Set 1 → 12 reps × 60 kg
-Set 2 → 12 reps × 55 kg
-Set 3 → 10 reps × 55 kg
-```
+1. **Detect** — each tab's header is checked; an old-format tab is
+   recognized immediately and left alone otherwise.
+2. **Read everything** — every row is parsed, including the hidden tags
+   that let Edit and Delete find the right rows later.
+3. **Rewrite in a staging copy** — the converted, one-row-per-set version
+   is written to a temporary tab first and fully verified.
+4. **Swap in** — only once that's confirmed complete does the old tab get
+   removed and the staging tab renamed into its place.
 
-Workout duration is stored separately in the day's Sheet tab so that it can also be restored on another device.
+If a migration is ever interrupted partway (lost connection, closed app),
+nothing is corrupted — either the original tab is untouched, or a
+retryable staging copy is sitting alongside it. The next sign-in or sync
+picks up cleanly from there. Once migrated, a tab is simply a normal
+current-format tab — there's no ongoing "legacy mode" to think about, and
+your History and Calendar look exactly as they did before migrating:
+same exercises, same sets, no duplicates, no missing workouts, just
+different cells behind the scenes.
 
 The `Weekly Progress` tab holds one row per week, including the week's date range:
 
@@ -784,6 +905,8 @@ The current focus is:
 - Progressive-overload trend tracking per exercise
 - Weekly and monthly attendance and training-load tracking
 - A personal touch (display name) that follows your account
+- Drop sets, bodyweight exercises, and per-set/rest timing — each optional
+- A persistent, 3-hour signed-in session
 - Google Sheets backup
 - Restore capability
 - Duplicate-safe synchronization
@@ -794,8 +917,9 @@ The current focus is:
 # 🔮 Future Ideas
 
 Already shipped, despite once being on this list: exercise autocomplete,
-"last time" values shown while logging, training-volume analytics, and
-exercise progression charts (see **Progress & Progressive Overload** above).
+"last time" values shown while logging, training-volume analytics, exercise
+progression charts (see **Progress & Progressive Overload** above), and a
+rest timer between sets (see **Per-Set Timing** above).
 
 Possible future improvements still on the table:
 
@@ -803,10 +927,10 @@ Possible future improvements still on the table:
 - Estimated 1RM
 - Active progressive-overload suggestions (a target weight/rep goal for your
   next session, not just a trend after the fact)
-- Rest timer between sets
 - Workout templates (e.g. Push / Pull / Legs)
 - RPE / RIR tracking
-- Body-weight tracking over time
+- Body-weight tracking over time (your own weight on the scale — distinct
+  from bodyweight *exercises*, which Gym Log already tracks)
 - Per-exercise and per-workout notes
 
 The goal is to add these features without sacrificing the simplicity and speed of the current app.
