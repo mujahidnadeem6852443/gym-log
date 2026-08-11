@@ -1993,14 +1993,24 @@ function initTokenClientIfReady(){
   });
   updateAuthUI();
 
-  // Best-effort: if we're still within the 3-hour session window but the
-  // stored token itself has already expired (app was closed for over an
-  // hour), try a silent, non-interactive refresh so no manual tap is
-  // needed. Some browsers only allow requestAccessToken off a real click,
-  // in which case this quietly fails and the "Reconnect" button (still
-  // shown by updateAuthUI above) is the fallback.
-  if(userEmail && !accessToken && !sessionExpired()){
-    getValidToken().then(() => { updateAuthUI(); syncAll(false); }).catch(() => { updateAuthUI(); });
+  if(userEmail && !sessionExpired()){
+    if(!accessToken){
+      // Best-effort: the stored token itself has already expired (app was
+      // closed for over an hour) — try a silent, non-interactive refresh
+      // so no manual tap is needed. Some browsers only allow
+      // requestAccessToken off a real click, in which case this quietly
+      // fails and the "Reconnect" button (still shown by updateAuthUI
+      // above) is the fallback.
+      getValidToken().then(() => { updateAuthUI(); syncAll(false); }).catch(() => { updateAuthUI(); });
+    } else if(!spreadsheetId){
+      // The persisted token is still valid, so there's nothing to
+      // reconnect — but spreadsheetId itself only ever gets resolved as a
+      // side effect of a sync, so without this a reload would otherwise
+      // leave "Open Google Sheet" hidden until some other action happened
+      // to sync. ensureSpreadsheet() (called inside syncAll) refreshes the
+      // UI itself once it resolves.
+      syncAll(false);
+    }
   }
 }
 
@@ -2197,29 +2207,38 @@ async function ensureSpreadsheet(){
   const token = await getValidToken();
   let id = localStorage.getItem(key);
 
-  if(id){
-    const check = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}?fields=spreadsheetId`, { headers:{ Authorization:'Bearer '+token } });
-    if(check.ok){ spreadsheetId = id; await loadSheetMeta(token); return id; }
-    localStorage.removeItem(key);
-  }
-
-  const searchRes = await fetch(
-    'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent("name='Gym Log Data' and trashed=false") + '&fields=files(id,name)',
-    { headers:{ Authorization:'Bearer '+token } }
-  );
-  if(searchRes.ok){
-    const data = await searchRes.json();
-    if(data.files && data.files.length){
-      spreadsheetId = data.files[0].id;
-      localStorage.setItem(key, spreadsheetId);
-      await loadSheetMeta(token);
-      return spreadsheetId;
+  try{
+    if(id){
+      const check = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}?fields=spreadsheetId`, { headers:{ Authorization:'Bearer '+token } });
+      if(check.ok){ spreadsheetId = id; await loadSheetMeta(token); return id; }
+      localStorage.removeItem(key);
     }
-  }
 
-  spreadsheetId = await createSpreadsheet(token);
-  localStorage.setItem(key, spreadsheetId);
-  return spreadsheetId;
+    const searchRes = await fetch(
+      'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent("name='Gym Log Data' and trashed=false") + '&fields=files(id,name)',
+      { headers:{ Authorization:'Bearer '+token } }
+    );
+    if(searchRes.ok){
+      const data = await searchRes.json();
+      if(data.files && data.files.length){
+        spreadsheetId = data.files[0].id;
+        localStorage.setItem(key, spreadsheetId);
+        await loadSheetMeta(token);
+        return spreadsheetId;
+      }
+    }
+
+    spreadsheetId = await createSpreadsheet(token);
+    localStorage.setItem(key, spreadsheetId);
+    return spreadsheetId;
+  } finally {
+    // Whichever path set spreadsheetId (or left it unset on failure), the
+    // "Open Google Sheet" link needs to reflect it right away — this is
+    // the only place spreadsheetId ever gets resolved, and it's called
+    // from several spots (sign-in, a silent reconnect, any sync) that
+    // don't all already refresh the UI themselves afterward.
+    updateAuthUI();
+  }
 }
 
 async function loadSheetMeta(token){
