@@ -155,11 +155,13 @@ the information is merged into that day's workout instead of creating unnecessar
 
 Saved workouts can also be edited from history.
 
-The list defaults to just the **current calendar month's** workouts, with a
-**Load older workouts** button at the bottom that reveals the previous month
-each time you press it — after months of consistent logging this keeps the
-list scannable instead of scrolling forever. Typing in the search box
-bypasses the month boundary entirely and searches your **complete** history,
+The list pages one calendar week at a time (same Sunday-start week used
+throughout the app), defaulting to whichever week your most recent workout
+falls in. A **‹ / ›** pair above the list steps to the week before or after —
+the label always shows the exact range on screen (e.g. "Aug 9 – Aug 15"),
+and the right arrow disables itself once you're back on the most recent
+week, since there's nothing newer to page to. Typing in the search box
+bypasses the week boundary entirely and searches your **complete** history,
 since searching means you're looking for something specific, not browsing
 what's recent.
 

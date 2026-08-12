@@ -895,14 +895,19 @@ function matchesHistoryQuery(entry, query){
   return formatDate(entry.date).toLowerCase().includes(query);
 }
 
-// History defaults to just the current calendar month's workouts. "Load
-// older workouts" steps the oldest-loaded boundary back one calendar month
-// at a time, accumulating (not replacing) what's shown — each click reveals
-// one more month below what's already visible. A search bypasses the
-// boundary entirely (you're looking for something specific, not browsing
-// recent workouts), so it always searches the full history regardless of
-// how many months are currently loaded.
-let historyOldestLoadedMonth = null;
+const historyPeriodNav = document.getElementById('historyPeriodNav');
+const historyPeriodLabel = document.getElementById('historyPeriodLabel');
+const historyPeriodPrev = document.getElementById('historyPeriodPrev');
+const historyPeriodNext = document.getElementById('historyPeriodNext');
+
+// History pages one calendar week at a time (same Sunday-start week as
+// Attendance) with left/right arrows — no growing list. Defaults to the
+// week containing your most recent workout; the right arrow disables once
+// you're on that week, since there's nothing newer to page to. A search
+// bypasses the week boundary entirely and searches full history, hiding
+// the pager — "which week" stops being the relevant question once you're
+// looking for something specific.
+let historyPageWeek = null;
 
 function renderHistory(){
   historyList.innerHTML = '';
@@ -911,12 +916,18 @@ function renderHistory(){
   const matched = searching ? history.filter(h => matchesHistoryQuery(h, query)) : history;
 
   let visible = matched;
-  let hasOlder = false;
-  if(!searching && matched.length){
-    const newestMonth = monthStartOf(matched[0].date);
-    if(!historyOldestLoadedMonth || historyOldestLoadedMonth > newestMonth) historyOldestLoadedMonth = newestMonth;
-    visible = matched.filter(h => monthStartOf(h.date) >= historyOldestLoadedMonth);
-    hasOlder = matched.some(h => monthStartOf(h.date) < historyOldestLoadedMonth);
+  if(searching || matched.length === 0){
+    historyPeriodNav.style.display = 'none';
+  } else {
+    const newestWeek = weekStartOf(matched[0].date);
+    if(!historyPageWeek) historyPageWeek = newestWeek;
+    const weekEndExclusive = new Date(historyPageWeek.getFullYear(), historyPageWeek.getMonth(), historyPageWeek.getDate() + 7);
+    visible = matched.filter(h => { const d = new Date(h.date); return d >= historyPageWeek && d < weekEndExclusive; });
+
+    historyPeriodNav.style.display = 'flex';
+    historyPeriodLabel.textContent = weekRangeLabel(historyPageWeek);
+    historyPeriodPrev.disabled = !matched.some(h => new Date(h.date) < historyPageWeek);
+    historyPeriodNext.disabled = historyPageWeek >= newestWeek;
   }
 
   if(history.length === 0){
@@ -925,6 +936,9 @@ function renderHistory(){
   } else if(matched.length === 0){
     historyEmptyNote.style.display = 'block';
     historyEmptyNote.textContent = `No workouts match "${historySearch.value.trim()}".`;
+  } else if(!searching && visible.length === 0){
+    historyEmptyNote.style.display = 'block';
+    historyEmptyNote.textContent = 'No workouts logged this week.';
   } else {
     historyEmptyNote.style.display = 'none';
   }
@@ -984,19 +998,16 @@ function renderHistory(){
     item.appendChild(head); item.appendChild(body);
     historyList.appendChild(item);
   });
-
-  if(hasOlder){
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'load-older-btn';
-    btn.textContent = 'Load older workouts';
-    btn.addEventListener('click', () => {
-      historyOldestLoadedMonth = addMonths(historyOldestLoadedMonth, -1);
-      renderHistory();
-    });
-    historyList.appendChild(btn);
-  }
 }
+
+historyPeriodPrev.addEventListener('click', () => {
+  historyPageWeek = new Date(historyPageWeek.getFullYear(), historyPageWeek.getMonth(), historyPageWeek.getDate() - 7);
+  renderHistory();
+});
+historyPeriodNext.addEventListener('click', () => {
+  historyPageWeek = new Date(historyPageWeek.getFullYear(), historyPageWeek.getMonth(), historyPageWeek.getDate() + 7);
+  renderHistory();
+});
 
 historySearch.addEventListener('input', () => renderHistory());
 
