@@ -155,12 +155,13 @@ the information is merged into that day's workout instead of creating unnecessar
 
 Saved workouts can also be edited from history.
 
-The list defaults to your **last 4 weeks** of workouts, with a **Load older
-workouts** button at the bottom to reveal earlier ones 4 weeks at a time —
-after months of consistent logging this keeps the list scannable instead of
-scrolling forever. Typing in the search box bypasses the window entirely and
-searches your **complete** history, since searching means you're looking for
-something specific, not browsing what's recent.
+The list defaults to just the **current calendar month's** workouts, with a
+**Load older workouts** button at the bottom that reveals the previous month
+each time you press it — after months of consistent logging this keeps the
+list scannable instead of scrolling forever. Typing in the search box
+bypasses the month boundary entirely and searches your **complete** history,
+since searching means you're looking for something specific, not browsing
+what's recent.
 
 ### 🚀 Launch Screen
 
@@ -210,15 +211,17 @@ A few things worth knowing:
 - **Exercise names are matched the same way autocomplete works** —
   case-insensitively, so "Bench Press" and "bench press" are tracked as the
   same exercise.
-- **Shows the last 4 weeks by default.** Months of logging the same
+- **Pages one calendar month at a time.** Months of logging the same
   exercise would otherwise cram the chart and the session list with more
-  points than you can read at a glance, so both default to a rolling
-  28-day window anchored to that exercise's most recent session. A **Load
-  older sessions** button at the bottom of the list extends the window
-  another 4 weeks each time you press it — the trend badges (Improved /
-  Stable / Declined) are always computed against your full history first,
-  so they're correct even for a session whose actual "previous session"
-  has scrolled out of view.
+  points than you can read at a glance, so both default to just that
+  exercise's most recent month with sessions, and a **‹ / ›** pair above
+  the chart steps to the adjacent month — swipe back to compare against
+  last month, then forward again to return to today. Switching exercises
+  in the dropdown always resets the page to that exercise's own latest
+  month, not wherever the previous exercise happened to be. Trend badges
+  (Improved / Stable / Declined) are always computed against your full
+  history first, so they're correct even for the first session of a month
+  whose actual "previous session" falls in the month before.
 - **Big totals are compacted.** Once total volume climbs past 1,000, it's
   shown like `34.9K` instead of `34932` — same number, just easier to read
   at a glance. This applies everywhere a total shows up: the chart's axis
@@ -266,20 +269,29 @@ A few things worth knowing:
 - **Google Sheets sync** writes Attendance Progress to its own tabs (see
   **Google Sheet Structure** below) so weekly/monthly/yearly history
   survives a restore on another device, same as your workouts.
-- **Each view opens on a compact window, not your full history:**
-  - **Weekly** shows the last **4 weeks** — about a month at a glance.
-  - **Monthly** shows just the **current calendar year's** months, and
-    resets to a fresh, short list the moment a new year starts — last
-    December doesn't linger in view once January arrives.
-  - **Yearly** shows the last **5 years**.
+- **Each view opens on a compact page, not your full history:**
+  - **Weekly** shows a fixed page of **4 weeks** at a time, with a
+    **‹ / ›** pair above the chart to step to the 4 weeks before or after —
+    the range label (e.g. "Jul 19 – Aug 15") always shows exactly what's on
+    screen. The right arrow disables itself once you're back at the most
+    recent 4 weeks — there's nothing newer to page to.
+  - **Monthly** shows a fixed calendar half-year at a time — **Jan–Jun** or
+    **Jul–Dec** — with the same **‹ / ›** pair to move a half-year at a
+    time. This keeps a chart with up to 12 months of bars from ever showing
+    more than 6 at once, and naturally resets to a short page the moment a
+    new half starts.
+  - **Yearly** shows the last **5 years** with a **Load older years**
+    button, since years accumulate slowly enough that a page-by-page
+    pager isn't needed.
 
-  A **Load older** button at the bottom of the list reveals the next chunk
-  (4 more weeks, a full prior year's worth of months, or 5 more years) each
-  time it's pressed. Trend badges are always computed against the complete,
-  unwindowed history first, so a week's Improved/Stable/Declined status is
-  correct even across a month boundary — the first week of a new month
-  still compares against the real last week of the month before, whether or
-  not that earlier week is currently on screen.
+  For Weekly and Monthly, the right arrow is always disabled once you're
+  viewing the page that contains today — you can look back as far as your
+  history goes, but not page into the future. Trend badges are always
+  computed against the complete, unwindowed history first, so a week's
+  Improved/Stable/Declined status is correct even across a month boundary —
+  the first week of a new month still compares against the real last week
+  of the month before, whether or not that earlier week is on the current
+  page.
 - **Big totals are compacted** the same way as Progress — `34.9K` instead
   of `34932` — in the chart, the summary line, and every row of the list.
 
@@ -549,9 +561,10 @@ Unlike the daily workout tabs, these three tabs are derived summaries, not
 an append-only log — each sync recomputes them from your full history and
 rewrites the tab, so they always reflect the current state rather than
 accumulating stale rows. They also always hold your **complete** history —
-the 4-week/current-year/5-year windows and "Load older" button described
-under **Attendance Progress** above are a UI convenience for the app screen
-only, not a limit on what's synced or storable.
+the paging described under **Attendance Progress** above (4 weeks at a
+time, a calendar half-year at a time, 5 years at a time) is a UI
+convenience for the app screen only, not a limit on what's synced or
+storable.
 
 ---
 

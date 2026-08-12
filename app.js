@@ -895,29 +895,29 @@ function matchesHistoryQuery(entry, query){
   return formatDate(entry.date).toLowerCase().includes(query);
 }
 
-// History defaults to a rolling 28-day ("4 week") window of the most recent
-// workouts, same pagination pattern as Attendance/Progress — "Load older"
-// grows it 28 days at a time. A search bypasses the window entirely (you're
-// looking for something specific, not browsing recent workouts), so it
-// always searches the full history regardless of how much is expanded.
-let historyWindowDays = 28;
-
-function windowRecentByDays(entriesNewestFirst, days){
-  if(entriesNewestFirst.length === 0) return entriesNewestFirst;
-  const anchor = new Date(entriesNewestFirst[0].date);
-  anchor.setHours(0, 0, 0, 0);
-  const cutoff = new Date(anchor);
-  cutoff.setDate(cutoff.getDate() - (days - 1));
-  return entriesNewestFirst.filter(h => new Date(h.date) >= cutoff);
-}
+// History defaults to just the current calendar month's workouts. "Load
+// older workouts" steps the oldest-loaded boundary back one calendar month
+// at a time, accumulating (not replacing) what's shown — each click reveals
+// one more month below what's already visible. A search bypasses the
+// boundary entirely (you're looking for something specific, not browsing
+// recent workouts), so it always searches the full history regardless of
+// how many months are currently loaded.
+let historyOldestLoadedMonth = null;
 
 function renderHistory(){
   historyList.innerHTML = '';
   const query = historySearch.value.trim().toLowerCase();
   const searching = !!query;
   const matched = searching ? history.filter(h => matchesHistoryQuery(h, query)) : history;
-  const visible = searching ? matched : windowRecentByDays(matched, historyWindowDays);
-  const hasOlder = !searching && visible.length < matched.length;
+
+  let visible = matched;
+  let hasOlder = false;
+  if(!searching && matched.length){
+    const newestMonth = monthStartOf(matched[0].date);
+    if(!historyOldestLoadedMonth || historyOldestLoadedMonth > newestMonth) historyOldestLoadedMonth = newestMonth;
+    visible = matched.filter(h => monthStartOf(h.date) >= historyOldestLoadedMonth);
+    hasOlder = matched.some(h => monthStartOf(h.date) < historyOldestLoadedMonth);
+  }
 
   if(history.length === 0){
     historyEmptyNote.style.display = 'block';
@@ -991,7 +991,7 @@ function renderHistory(){
     btn.className = 'load-older-btn';
     btn.textContent = 'Load older workouts';
     btn.addEventListener('click', () => {
-      historyWindowDays += 28;
+      historyOldestLoadedMonth = addMonths(historyOldestLoadedMonth, -1);
       renderHistory();
     });
     historyList.appendChild(btn);
@@ -1544,7 +1544,7 @@ function renderProgressSummaryHtml(points){
   return `<span class="${cls}">${arrow}</span> ${verb} ${pct}% vs last time (${formatCompactLoad(last.volume)} ${unit})`;
 }
 
-function renderProgressSessionList(points, container, hasOlder, onLoadOlder){
+function renderProgressSessionList(points, container){
   container.innerHTML = '';
   [...points].reverse().forEach(p => {
     const row = document.createElement('div');
@@ -1570,15 +1570,6 @@ function renderProgressSessionList(points, container, hasOlder, onLoadOlder){
     row.appendChild(dateSpan); row.appendChild(volSpan); row.appendChild(badge);
     container.appendChild(row);
   });
-
-  if(hasOlder){
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'load-older-btn';
-    btn.textContent = 'Load older sessions';
-    btn.addEventListener('click', onLoadOlder);
-    container.appendChild(btn);
-  }
 }
 
 const progressExerciseSelect = document.getElementById('progressExerciseSelect');
@@ -1586,35 +1577,71 @@ const progressChartWrap = document.getElementById('progressChartWrap');
 const progressLegend = document.getElementById('progressLegend');
 const progressSummary = document.getElementById('progressSummary');
 const progressSessionList = document.getElementById('progressSessionList');
+const progressPeriodNav = document.getElementById('progressPeriodNav');
+const progressPeriodLabel = document.getElementById('progressPeriodLabel');
+const progressPeriodPrev = document.getElementById('progressPeriodPrev');
+const progressPeriodNext = document.getElementById('progressPeriodNext');
 
-// Progress defaults to a rolling 28-day ("4 week") window of the most recent
-// sessions for the selected exercise, so the chart/list stay compact even
-// after months of logging. Anchored to the exercise's own most recent
-// session (not real "today") so an exercise you haven't trained recently
-// doesn't render an empty window. "Load older" grows the window 28 days at
-// a time; it resets to 28 only when the user switches exercises.
-let progressWindowDays = 28;
-
-function windowByDays(points, days){
-  if(points.length === 0) return points;
-  const anchor = new Date(points[points.length - 1].date);
-  const cutoff = new Date(anchor);
-  cutoff.setHours(0, 0, 0, 0);
-  cutoff.setDate(cutoff.getDate() - (days - 1));
-  return points.filter(p => new Date(p.date) >= cutoff);
+function pointsInMonth(points, monthStart){
+  const nextMonth = addMonths(monthStart, 1);
+  return points.filter(p => { const d = new Date(p.date); return d >= monthStart && d < nextMonth; });
 }
+
+// Progress pages one calendar month at a time — the chart and session list
+// both show only that month's sessions, never a longer rolling window.
+// Left/right arrows step to the adjacent month; trend badges are still
+// computed against the exercise's FULL history (getExerciseTrend) before
+// the month filter is applied, so a session at the start of a month still
+// correctly compares against the real last session of the month before.
+// progressPageMonthFor tracks which exercise the current page belongs to,
+// so switching exercises always resets to that exercise's own latest month
+// rather than reusing a stale page from a different exercise.
+let progressPageMonth = null;
+let progressPageMonthFor = null;
 
 function renderProgressForExercise(name){
   const allPoints = getExerciseTrend(name);
-  const points = windowByDays(allPoints, progressWindowDays);
+  if(progressPageMonthFor !== name){ progressPageMonth = null; progressPageMonthFor = name; }
+
+  if(allPoints.length === 0){
+    progressPeriodNav.style.display = 'none';
+    progressChartWrap.innerHTML = '<div class="progress-empty">No sessions logged yet.</div>';
+    progressSummary.innerHTML = '';
+    progressSessionList.innerHTML = '';
+    return;
+  }
+
+  const earliestMonth = monthStartOf(allPoints[0].date);
+  const latestMonth = monthStartOf(allPoints[allPoints.length - 1].date);
+  if(!progressPageMonth) progressPageMonth = latestMonth;
+
+  const points = pointsInMonth(allPoints, progressPageMonth);
+
+  progressPeriodNav.style.display = 'flex';
+  progressPeriodLabel.textContent = monthLabelFull(progressPageMonth);
+  progressPeriodPrev.disabled = progressPageMonth <= earliestMonth;
+  progressPeriodNext.disabled = progressPageMonth >= latestMonth;
+
+  if(points.length === 0){
+    progressChartWrap.innerHTML = '<div class="progress-empty">No sessions logged this month.</div>';
+    progressSummary.innerHTML = '';
+    progressSessionList.innerHTML = '';
+    return;
+  }
+
   progressChartWrap.innerHTML = renderProgressChartSvg(points);
   progressSummary.innerHTML = renderProgressSummaryHtml(points);
-  const hasOlder = points.length < allPoints.length;
-  renderProgressSessionList(points, progressSessionList, hasOlder, () => {
-    progressWindowDays += 28;
-    renderProgressForExercise(name);
-  });
+  renderProgressSessionList(points, progressSessionList);
 }
+
+progressPeriodPrev.addEventListener('click', () => {
+  progressPageMonth = addMonths(progressPageMonth, -1);
+  renderProgressForExercise(progressExerciseSelect.value);
+});
+progressPeriodNext.addEventListener('click', () => {
+  progressPageMonth = addMonths(progressPageMonth, 1);
+  renderProgressForExercise(progressExerciseSelect.value);
+});
 
 function renderProgress(){
   const trendable = getTrendableExercises();
@@ -1623,6 +1650,7 @@ function renderProgress(){
   if(trendable.length === 0){
     progressExerciseSelect.style.display = 'none';
     progressLegend.style.display = 'none';
+    progressPeriodNav.style.display = 'none';
     progressChartWrap.innerHTML = '<div class="progress-empty">Log the same exercise at least twice to see a progress trend here.</div>';
     progressSummary.innerHTML = '';
     progressSessionList.innerHTML = '';
@@ -1642,10 +1670,7 @@ function renderProgress(){
   progressExerciseSelect.value = selected;
   renderProgressForExercise(selected);
 }
-progressExerciseSelect.addEventListener('change', (e) => {
-  progressWindowDays = 28;
-  renderProgressForExercise(e.target.value);
-});
+progressExerciseSelect.addEventListener('change', (e) => renderProgressForExercise(e.target.value));
 
 // ---------- Attendance (weekly & monthly load + attendance tracking) ----------
 // Deliberately independent of the per-exercise Progress feature above: its
@@ -1688,6 +1713,12 @@ function monthLabel(monthStart){
 }
 function daysInMonth(monthStart){
   return new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0).getDate();
+}
+function addMonths(monthStart, n){
+  return new Date(monthStart.getFullYear(), monthStart.getMonth() + n, 1);
+}
+function monthLabelFull(monthStart){
+  return monthStart.toLocaleDateString(undefined, { month:'long', year:'numeric' });
 }
 
 function getWeeklyAggregates(){
@@ -1847,74 +1878,77 @@ const attendanceLoadChartWrap = document.getElementById('attendanceLoadChartWrap
 const attendanceDaysChartWrap = document.getElementById('attendanceDaysChartWrap');
 const attendanceSummary = document.getElementById('attendanceSummary');
 const attendanceList = document.getElementById('attendanceList');
+const attendancePeriodNav = document.getElementById('attendancePeriodNav');
+const attendancePeriodLabel = document.getElementById('attendancePeriodLabel');
+const attendancePeriodPrev = document.getElementById('attendancePeriodPrev');
+const attendancePeriodNext = document.getElementById('attendancePeriodNext');
 
 let attendancePeriod = 'week';
 
-// Each period tab shows a compact window by default rather than the entire
-// history at once — Weekly shows the last 4 weeks ("about a month"), Monthly
-// resets each January to just the current year's months so it doesn't grow
-// forever, and Yearly shows the last 5 years. "Load older" grows that
-// period's window explicitly (stored here); trend badges are always computed
-// on the FULL chronological chain first (attachLoadTrend/attachAttendanceTrend
-// below), then the result is sliced down for display — so a week's trend
-// arrow still correctly reflects the real previous week even when that
-// earlier week has scrolled out of the visible window, and the first week of
-// a new month still compares against the last week of the previous one with
-// no special-casing needed.
-const attendanceWindowOverride = { week: null, month: null, year: null };
+// Weekly pages a fixed 4-week chunk at a time with left/right arrows — no
+// growing list. Offset 0 is the most recent 4 weeks, offset 1 the 4 before
+// that, and so on. Monthly pages a calendar-aligned half-year at a time
+// (Jan–Jun / Jul–Dec), same reasoning: a fixed, small page keeps the bars
+// readable no matter how long you've been logging, and arrows replace
+// "Load older" entirely for both. Yearly keeps the original simple "last 5,
+// Load older reveals 5 more" list — years accumulate slowly enough that it
+// never gets crowded the way weeks/months did.
+//
+// In every case, trend badges (Improved/Stable/Declined) are computed
+// against the FULL chronological history first (attachLoadTrend /
+// attachAttendanceTrend below), then the result is filtered down to the
+// current page — so a period's trend still correctly reflects the real
+// previous period even when that earlier period isn't the one on screen.
+let weekPageOffset = 0;
+let monthPageHalf = null;
+let yearVisibleCount = null;
 
-function attendanceChunkSize(period){
-  return period === 'week' ? 4 : period === 'year' ? 5 : 12;
+function weekPageChunk(allPoints, offset){
+  const size = 4;
+  const end = Math.max(0, Math.min(allPoints.length, allPoints.length - offset * size));
+  const start = Math.max(0, end - size);
+  return allPoints.slice(start, end);
+}
+function weekPageLabel(points){
+  if(points.length === 0) return '';
+  const fmt = (dt) => dt.toLocaleDateString(undefined, { month:'short', day:'numeric' });
+  return `${fmt(points[0].periodStart)} – ${fmt(weekEndOf(points[points.length - 1].periodStart))}`;
 }
 
-function defaultAttendanceVisibleCount(period, points){
-  if(period === 'week') return Math.min(4, points.length);
-  if(period === 'year') return Math.min(5, points.length);
-  const thisYear = new Date().getFullYear();
-  const count = points.filter(p => p.periodStart.getFullYear() === thisYear).length;
-  return Math.min(Math.max(count, 1), points.length);
+function halfYearOf(date){
+  const d = new Date(date);
+  return { year: d.getFullYear(), half: d.getMonth() < 6 ? 1 : 2 };
+}
+function halfYearStart(h){ return new Date(h.year, h.half === 1 ? 0 : 6, 1); }
+function halfYearEndExclusive(h){ return new Date(h.year, h.half === 1 ? 6 : 12, 1); }
+function halfYearLabel(h){ return (h.half === 1 ? 'Jan – Jun ' : 'Jul – Dec ') + h.year; }
+function prevHalfYear(h){ return h.half === 1 ? { year: h.year - 1, half: 2 } : { year: h.year, half: 1 }; }
+function nextHalfYear(h){ return h.half === 1 ? { year: h.year, half: 2 } : { year: h.year + 1, half: 1 }; }
+function halfYearIsBefore(a, b){ return a.year < b.year || (a.year === b.year && a.half < b.half); }
+function pointsInHalfYear(points, h){
+  const start = halfYearStart(h), end = halfYearEndExclusive(h);
+  return points.filter(p => p.periodStart >= start && p.periodStart < end);
 }
 
-function renderAttendance(){
-  const raw = attendancePeriod === 'week' ? getWeeklyAggregates()
-    : attendancePeriod === 'month' ? getMonthlyAggregates()
-    : getYearlyAggregates();
-
-  if(raw.length === 0){
-    attendanceLoadChartWrap.innerHTML = '<div class="attendance-empty">Log a workout to start tracking attendance and load.</div>';
-    attendanceDaysChartWrap.innerHTML = '';
-    attendanceSummary.innerHTML = '';
-    attendanceList.innerHTML = '';
-    return;
-  }
-
-  const allPoints = attachAttendanceTrend(attachLoadTrend(raw));
-  const visibleCount = attendanceWindowOverride[attendancePeriod] ?? defaultAttendanceVisibleCount(attendancePeriod, allPoints);
-  const points = allPoints.slice(-visibleCount);
-  const hasOlder = points.length < allPoints.length;
-
-  attendanceLoadChartWrap.innerHTML = renderLoadLineSvg(points);
-  attendanceDaysChartWrap.innerHTML = renderAttendanceBarSvg(points);
-
+function renderAttendanceSummary(points, periodWord){
   const last = points[points.length - 1];
   const unit = getWeightUnit();
-  const periodWord = attendancePeriod === 'week' ? 'week' : attendancePeriod === 'month' ? 'month' : 'year';
-  let summaryHtml;
   if(!last.loadStatus){
-    summaryHtml = `First ${periodWord} logged — ${last.attendance}/${last.possibleDays} days, ${formatCompactLoad(last.load)} ${unit} total load.`;
-  } else {
-    const loadCls = last.loadStatus === 'improved' ? 'trend-up' : last.loadStatus === 'declined' ? 'trend-down' : 'trend-flat';
-    const loadArrow = last.loadStatus === 'improved' ? '↑' : last.loadStatus === 'declined' ? '↓' : '→';
-    const loadPct = Math.abs(Math.round(last.loadDiffPct));
-    const loadWords = last.loadStatus === 'stable'
-      ? `about the same load as last ${periodWord}`
-      : `${last.loadStatus === 'improved' ? 'up' : 'down'} ${loadPct}% load vs last ${periodWord}`;
-    const attWords = last.attStatus === 'improved' ? 'up on attendance' : last.attStatus === 'declined' ? 'down on attendance' : 'same attendance';
-    summaryHtml = `<span class="${loadCls}">${loadArrow}</span> ${loadWords} · ${attWords} (${last.attendance}/${last.possibleDays} days)`;
+    return `First ${periodWord} logged — ${last.attendance}/${last.possibleDays} days, ${formatCompactLoad(last.load)} ${unit} total load.`;
   }
-  attendanceSummary.innerHTML = summaryHtml;
+  const loadCls = last.loadStatus === 'improved' ? 'trend-up' : last.loadStatus === 'declined' ? 'trend-down' : 'trend-flat';
+  const loadArrow = last.loadStatus === 'improved' ? '↑' : last.loadStatus === 'declined' ? '↓' : '→';
+  const loadPct = Math.abs(Math.round(last.loadDiffPct));
+  const loadWords = last.loadStatus === 'stable'
+    ? `about the same load as last ${periodWord}`
+    : `${last.loadStatus === 'improved' ? 'up' : 'down'} ${loadPct}% load vs last ${periodWord}`;
+  const attWords = last.attStatus === 'improved' ? 'up on attendance' : last.attStatus === 'declined' ? 'down on attendance' : 'same attendance';
+  return `<span class="${loadCls}">${loadArrow}</span> ${loadWords} · ${attWords} (${last.attendance}/${last.possibleDays} days)`;
+}
 
+function renderAttendanceRows(points){
   attendanceList.innerHTML = '';
+  const unit = getWeightUnit();
   [...points].reverse().forEach(p => {
     const row = document.createElement('div');
     row.className = 'attendance-row';
@@ -1947,19 +1981,103 @@ function renderAttendance(){
     row.appendChild(top); row.appendChild(bottom);
     attendanceList.appendChild(row);
   });
+}
+
+function renderAttendanceEmpty(message){
+  attendanceLoadChartWrap.innerHTML = `<div class="attendance-empty">${message}</div>`;
+  attendanceDaysChartWrap.innerHTML = '';
+  attendanceSummary.innerHTML = '';
+  attendanceList.innerHTML = '';
+}
+
+function renderAttendance(){
+  if(attendancePeriod === 'week'){
+    const allPoints = attachAttendanceTrend(attachLoadTrend(getWeeklyAggregates()));
+    if(allPoints.length === 0){
+      attendancePeriodNav.style.display = 'none';
+      renderAttendanceEmpty('Log a workout to start tracking attendance and load.');
+      return;
+    }
+    const maxOffset = Math.max(0, Math.ceil(allPoints.length / 4) - 1);
+    weekPageOffset = Math.min(Math.max(weekPageOffset, 0), maxOffset);
+    const points = weekPageChunk(allPoints, weekPageOffset);
+
+    attendancePeriodNav.style.display = 'flex';
+    attendancePeriodLabel.textContent = weekPageLabel(points);
+    attendancePeriodPrev.disabled = weekPageOffset >= maxOffset;
+    attendancePeriodNext.disabled = weekPageOffset <= 0;
+
+    if(points.length === 0){ renderAttendanceEmpty('No workouts logged in this period.'); return; }
+    attendanceLoadChartWrap.innerHTML = renderLoadLineSvg(points);
+    attendanceDaysChartWrap.innerHTML = renderAttendanceBarSvg(points);
+    attendanceSummary.innerHTML = renderAttendanceSummary(points, 'week');
+    renderAttendanceRows(points);
+    return;
+  }
+
+  if(attendancePeriod === 'month'){
+    const allPoints = attachAttendanceTrend(attachLoadTrend(getMonthlyAggregates()));
+    if(allPoints.length === 0){
+      attendancePeriodNav.style.display = 'none';
+      renderAttendanceEmpty('Log a workout to start tracking attendance and load.');
+      return;
+    }
+    if(!monthPageHalf) monthPageHalf = halfYearOf(new Date());
+    const todayHalf = halfYearOf(new Date());
+    const points = pointsInHalfYear(allPoints, monthPageHalf);
+
+    attendancePeriodNav.style.display = 'flex';
+    attendancePeriodLabel.textContent = halfYearLabel(monthPageHalf);
+    attendancePeriodPrev.disabled = !allPoints.some(p => p.periodStart < halfYearStart(monthPageHalf));
+    attendancePeriodNext.disabled = !halfYearIsBefore(monthPageHalf, todayHalf);
+
+    if(points.length === 0){ renderAttendanceEmpty('No workouts logged in this period.'); return; }
+    attendanceLoadChartWrap.innerHTML = renderLoadLineSvg(points);
+    attendanceDaysChartWrap.innerHTML = renderAttendanceBarSvg(points);
+    attendanceSummary.innerHTML = renderAttendanceSummary(points, 'month');
+    renderAttendanceRows(points);
+    return;
+  }
+
+  // Yearly — small, simple "last 5 + Load older" list, no arrow pager.
+  attendancePeriodNav.style.display = 'none';
+  const allPoints = attachAttendanceTrend(attachLoadTrend(getYearlyAggregates()));
+  if(allPoints.length === 0){
+    renderAttendanceEmpty('Log a workout to start tracking attendance and load.');
+    return;
+  }
+  const visibleCount = Math.min(yearVisibleCount || 5, allPoints.length);
+  const points = allPoints.slice(-visibleCount);
+  const hasOlder = points.length < allPoints.length;
+
+  attendanceLoadChartWrap.innerHTML = renderLoadLineSvg(points);
+  attendanceDaysChartWrap.innerHTML = renderAttendanceBarSvg(points);
+  attendanceSummary.innerHTML = renderAttendanceSummary(points, 'year');
+  renderAttendanceRows(points);
 
   if(hasOlder){
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'load-older-btn';
-    btn.textContent = `Load older ${periodWord}s`;
+    btn.textContent = 'Load older years';
     btn.addEventListener('click', () => {
-      attendanceWindowOverride[attendancePeriod] = Math.min(visibleCount + attendanceChunkSize(attendancePeriod), allPoints.length);
+      yearVisibleCount = Math.min(visibleCount + 5, allPoints.length);
       renderAttendance();
     });
     attendanceList.appendChild(btn);
   }
 }
+
+attendancePeriodPrev.addEventListener('click', () => {
+  if(attendancePeriod === 'week'){ weekPageOffset += 1; }
+  else if(attendancePeriod === 'month'){ monthPageHalf = prevHalfYear(monthPageHalf); }
+  renderAttendance();
+});
+attendancePeriodNext.addEventListener('click', () => {
+  if(attendancePeriod === 'week'){ weekPageOffset = Math.max(0, weekPageOffset - 1); }
+  else if(attendancePeriod === 'month'){ monthPageHalf = nextHalfYear(monthPageHalf); }
+  renderAttendance();
+});
 
 attendanceTabs.addEventListener('click', (e) => {
   const btn = e.target.closest('.attendance-tab');
