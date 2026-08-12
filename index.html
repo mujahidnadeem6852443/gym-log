@@ -677,6 +677,11 @@
 <section>
   <div class="section-title">History</div>
   <input type="search" class="history-search" id="historySearch" placeholder="Search exercises or dates…" autocomplete="off">
+  <div class="period-nav" id="historyPeriodNav">
+    <button class="period-nav-btn" id="historyPeriodPrev" type="button" aria-label="Previous week">‹</button>
+    <span class="period-nav-label" id="historyPeriodLabel"></span>
+    <button class="period-nav-btn" id="historyPeriodNext" type="button" aria-label="Next week">›</button>
+  </div>
   <div id="historyList"></div>
   <div class="empty-note" id="historyEmptyNote" style="display:none;">No saved workouts yet.</div>
 </section>
