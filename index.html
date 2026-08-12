@@ -430,6 +430,34 @@
   .attendance-days-badge.declined{ color:#ff6b6b; background:rgba(255,107,107,0.14); }
   .attendance-load-value{ font-family:var(--mono); color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
 
+  /* Left/right period pager — Progress and the Weekly/Monthly Attendance
+     tabs step one page (month / 4-week chunk / half-year) at a time
+     instead of growing a list; History keeps the "load older" model below
+     since it's meant to accumulate, not replace. */
+  .period-nav{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    margin:12px 0; padding:2px 2px;
+  }
+  .period-nav-btn{
+    background:var(--panel-2); border:1px solid var(--line); color:var(--text);
+    font-size:16px; font-weight:700; width:34px; height:34px; border-radius:8px;
+    display:flex; align-items:center; justify-content:center; line-height:1;
+  }
+  .period-nav-btn:disabled{ opacity:0.3; }
+  .period-nav-label{
+    flex:1; text-align:center; font-size:13px; font-weight:700; color:var(--text);
+    font-variant-numeric:tabular-nums;
+  }
+
+  /* "Load older" pagination — History accumulates a calendar month at a
+     time; Yearly Attendance accumulates 5 years at a time. */
+  .load-older-btn{
+    display:block; width:100%; margin-top:10px; padding:10px; background:var(--panel-2);
+    border:1px dashed var(--line); border-radius:8px; color:var(--muted);
+    font-size:12px; font-weight:700; letter-spacing:0.3px; text-align:center; cursor:pointer;
+  }
+  .load-older-btn:hover{ color:var(--text); border-color:var(--blue); }
+
   /* History */
   .history-item{background:var(--panel); border:1px solid var(--line); border-radius:12px; margin-bottom:10px; overflow:hidden;}
   .history-head{padding:12px 14px; display:flex; justify-content:space-between; align-items:center; cursor:pointer;}
@@ -599,6 +627,11 @@
   <div class="section-title">Progress</div>
   <div class="progress-card">
     <select class="progress-exercise-select" id="progressExerciseSelect"></select>
+    <div class="period-nav" id="progressPeriodNav">
+      <button class="period-nav-btn" id="progressPeriodPrev" type="button" aria-label="Previous month">‹</button>
+      <span class="period-nav-label" id="progressPeriodLabel"></span>
+      <button class="period-nav-btn" id="progressPeriodNext" type="button" aria-label="Next month">›</button>
+    </div>
     <div id="progressChartWrap"></div>
     <div class="progress-legend" id="progressLegend">
       <span><span class="legend-dot-status improved"></span> Improved</span>
@@ -616,6 +649,13 @@
     <div class="attendance-tabs" id="attendanceTabs">
       <button class="attendance-tab active" data-period="week" type="button">Weekly</button>
       <button class="attendance-tab" data-period="month" type="button">Monthly</button>
+      <button class="attendance-tab" data-period="year" type="button">Yearly</button>
+    </div>
+
+    <div class="period-nav" id="attendancePeriodNav">
+      <button class="period-nav-btn" id="attendancePeriodPrev" type="button" aria-label="Previous period">‹</button>
+      <span class="period-nav-label" id="attendancePeriodLabel"></span>
+      <button class="period-nav-btn" id="attendancePeriodNext" type="button" aria-label="Next period">›</button>
     </div>
 
     <div class="attendance-subtitle">Total load</div>
