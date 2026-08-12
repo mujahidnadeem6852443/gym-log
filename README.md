@@ -155,6 +155,13 @@ the information is merged into that day's workout instead of creating unnecessar
 
 Saved workouts can also be edited from history.
 
+The list defaults to your **last 4 weeks** of workouts, with a **Load older
+workouts** button at the bottom to reveal earlier ones 4 weeks at a time —
+after months of consistent logging this keeps the list scannable instead of
+scrolling forever. Typing in the search box bypasses the window entirely and
+searches your **complete** history, since searching means you're looking for
+something specific, not browsing what's recent.
+
 ### 🚀 Launch Screen
 
 On every open, Gym Log shows a brief (~2 second) splash screen with the app
@@ -203,25 +210,40 @@ A few things worth knowing:
 - **Exercise names are matched the same way autocomplete works** —
   case-insensitively, so "Bench Press" and "bench press" are tracked as the
   same exercise.
+- **Shows the last 4 weeks by default.** Months of logging the same
+  exercise would otherwise cram the chart and the session list with more
+  points than you can read at a glance, so both default to a rolling
+  28-day window anchored to that exercise's most recent session. A **Load
+  older sessions** button at the bottom of the list extends the window
+  another 4 weeks each time you press it — the trend badges (Improved /
+  Stable / Declined) are always computed against your full history first,
+  so they're correct even for a session whose actual "previous session"
+  has scrolled out of view.
+- **Big totals are compacted.** Once total volume climbs past 1,000, it's
+  shown like `34.9K` instead of `34932` — same number, just easier to read
+  at a glance. This applies everywhere a total shows up: the chart's axis
+  and endpoint label, the summary line, and the session list.
 
 ### 📅 Attendance Progress
 
 Separate from per-exercise Progress above, Gym Log also tracks how
 consistently you're training overall — how many days you went, and how much
-total work you did, week to week and month to month.
+total work you did, week to week, month to month, and year to year.
 
-Switch between two views:
+Switch between three views:
 
 - **Weekly** — attendance and total training load for each week, with weeks
   starting on **Sunday**
 - **Monthly** — the same two numbers rolled up by calendar month
+- **Yearly** — the same two numbers rolled up by calendar year
 
 Each view shows two charts sharing the same time periods on their x-axis:
 
 - A **line chart** of total training load (reps × weight, summed across
   every set of every exercise, every day in the period)
 - A **bar chart** of days attended, with a dashed reference line at the
-  maximum possible days in that period (7 for a week, 28–31 for a month)
+  maximum possible days in that period (7 for a week, 28–31 for a month,
+  365/366 for a year)
 
 Each period is compared to the one before it and colored the same way as
 Progress — improved, stable, or declined — with a plain-language summary:
@@ -242,8 +264,24 @@ A few things worth knowing:
   your device's workout history every time you save, edit, delete, or
   restore a workout.
 - **Google Sheets sync** writes Attendance Progress to its own tabs (see
-  **Google Sheet Structure** below) so weekly/monthly history survives a
-  restore on another device, same as your workouts.
+  **Google Sheet Structure** below) so weekly/monthly/yearly history
+  survives a restore on another device, same as your workouts.
+- **Each view opens on a compact window, not your full history:**
+  - **Weekly** shows the last **4 weeks** — about a month at a glance.
+  - **Monthly** shows just the **current calendar year's** months, and
+    resets to a fresh, short list the moment a new year starts — last
+    December doesn't linger in view once January arrives.
+  - **Yearly** shows the last **5 years**.
+
+  A **Load older** button at the bottom of the list reveals the next chunk
+  (4 more weeks, a full prior year's worth of months, or 5 more years) each
+  time it's pressed. Trend badges are always computed against the complete,
+  unwindowed history first, so a week's Improved/Stable/Declined status is
+  correct even across a month boundary — the first week of a new month
+  still compares against the real last week of the month before, whether or
+  not that earlier week is currently on screen.
+- **Big totals are compacted** the same way as Progress — `34.9K` instead
+  of `34932` — in the chart, the summary line, and every row of the list.
 
 ### 👋 Your Name
 
@@ -416,7 +454,7 @@ Gym Log Data
 ```
 
 It contains an `Overview` tab, a `Weekly Progress` tab, a `Monthly Progress`
-tab, and every workout day gets its own date tab.
+tab, a `Yearly Progress` tab, and every workout day gets its own date tab.
 
 Example:
 
@@ -426,6 +464,7 @@ Gym Log Data
 ├── Overview
 ├── Weekly Progress
 ├── Monthly Progress
+├── Yearly Progress
 ├── 6 Aug 2026
 ├── 7 Aug 2026
 ├── 8 Aug 2026
@@ -500,10 +539,19 @@ The `Monthly Progress` tab holds one row per calendar month:
 |-------|----------------|------------|
 | Aug 2026 | 7 | 9440 |
 
-Unlike the daily workout tabs, these two tabs are derived summaries, not an
-append-only log — each sync recomputes them from your full history and
+The `Yearly Progress` tab holds one row per calendar year:
+
+| Year | Days Attended | Total Load |
+|------|----------------|------------|
+| 2026 | 192 | 721600 |
+
+Unlike the daily workout tabs, these three tabs are derived summaries, not
+an append-only log — each sync recomputes them from your full history and
 rewrites the tab, so they always reflect the current state rather than
-accumulating stale rows.
+accumulating stale rows. They also always hold your **complete** history —
+the 4-week/current-year/5-year windows and "Load older" button described
+under **Attendance Progress** above are a UI convenience for the app screen
+only, not a limit on what's synced or storable.
 
 ---
 

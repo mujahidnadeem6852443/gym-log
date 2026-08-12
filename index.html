@@ -430,6 +430,16 @@
   .attendance-days-badge.declined{ color:#ff6b6b; background:rgba(255,107,107,0.14); }
   .attendance-load-value{ font-family:var(--mono); color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
 
+  /* "Load older" pagination — Attendance, Progress, and History all cap
+     their default view to a recent window and use this same control to
+     reveal earlier data on demand. */
+  .load-older-btn{
+    display:block; width:100%; margin-top:10px; padding:10px; background:var(--panel-2);
+    border:1px dashed var(--line); border-radius:8px; color:var(--muted);
+    font-size:12px; font-weight:700; letter-spacing:0.3px; text-align:center; cursor:pointer;
+  }
+  .load-older-btn:hover{ color:var(--text); border-color:var(--blue); }
+
   /* History */
   .history-item{background:var(--panel); border:1px solid var(--line); border-radius:12px; margin-bottom:10px; overflow:hidden;}
   .history-head{padding:12px 14px; display:flex; justify-content:space-between; align-items:center; cursor:pointer;}
@@ -616,6 +626,7 @@
     <div class="attendance-tabs" id="attendanceTabs">
       <button class="attendance-tab active" data-period="week" type="button">Weekly</button>
       <button class="attendance-tab" data-period="month" type="button">Monthly</button>
+      <button class="attendance-tab" data-period="year" type="button">Yearly</button>
     </div>
 
     <div class="attendance-subtitle">Total load</div>

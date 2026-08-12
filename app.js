@@ -895,15 +895,34 @@ function matchesHistoryQuery(entry, query){
   return formatDate(entry.date).toLowerCase().includes(query);
 }
 
+// History defaults to a rolling 28-day ("4 week") window of the most recent
+// workouts, same pagination pattern as Attendance/Progress — "Load older"
+// grows it 28 days at a time. A search bypasses the window entirely (you're
+// looking for something specific, not browsing recent workouts), so it
+// always searches the full history regardless of how much is expanded.
+let historyWindowDays = 28;
+
+function windowRecentByDays(entriesNewestFirst, days){
+  if(entriesNewestFirst.length === 0) return entriesNewestFirst;
+  const anchor = new Date(entriesNewestFirst[0].date);
+  anchor.setHours(0, 0, 0, 0);
+  const cutoff = new Date(anchor);
+  cutoff.setDate(cutoff.getDate() - (days - 1));
+  return entriesNewestFirst.filter(h => new Date(h.date) >= cutoff);
+}
+
 function renderHistory(){
   historyList.innerHTML = '';
   const query = historySearch.value.trim().toLowerCase();
-  const visible = query ? history.filter(h => matchesHistoryQuery(h, query)) : history;
+  const searching = !!query;
+  const matched = searching ? history.filter(h => matchesHistoryQuery(h, query)) : history;
+  const visible = searching ? matched : windowRecentByDays(matched, historyWindowDays);
+  const hasOlder = !searching && visible.length < matched.length;
 
   if(history.length === 0){
     historyEmptyNote.style.display = 'block';
     historyEmptyNote.textContent = 'No saved workouts yet.';
-  } else if(visible.length === 0){
+  } else if(matched.length === 0){
     historyEmptyNote.style.display = 'block';
     historyEmptyNote.textContent = `No workouts match "${historySearch.value.trim()}".`;
   } else {
@@ -965,6 +984,18 @@ function renderHistory(){
     item.appendChild(head); item.appendChild(body);
     historyList.appendChild(item);
   });
+
+  if(hasOlder){
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'load-older-btn';
+    btn.textContent = 'Load older workouts';
+    btn.addEventListener('click', () => {
+      historyWindowDays += 28;
+      renderHistory();
+    });
+    historyList.appendChild(btn);
+  }
 }
 
 historySearch.addEventListener('input', () => renderHistory());
@@ -1380,6 +1411,19 @@ calNext.addEventListener('click', () => {
 const TREND_COLOR = { improved:'#5fd88f', stable:'#4da8ff', declined:'#ff6b6b', none:'#8b9199' };
 const CHART_INK = { line:'#2a2d31', muted:'#8b9199', text:'#ececee', ring:'#17191c' };
 
+// Large volume/load totals (reps × weight, summed across sets) grow into
+// 5-6 digit numbers within a few months of logging. Compact them the same
+// way view/follower counts are compacted, everywhere a total is displayed —
+// the underlying stored numbers (localStorage, Sheets) stay full-precision.
+function formatCompactLoad(n){
+  const r = Math.round(n);
+  const abs = Math.abs(r);
+  const trim = (s) => s.replace(/\.0$/, '');
+  if(abs >= 1000000) return trim((r / 1000000).toFixed(2).replace(/0$/, '')) + 'M';
+  if(abs >= 1000) return trim((r / 1000).toFixed(1)) + 'K';
+  return String(r);
+}
+
 // A "stage" is one reps×weight pair — either a set's own main numbers, or
 // one of its drop-set continuations. Splitting it out here means drop sets
 // need no special case anywhere volume is summed: a plain set is just a
@@ -1434,7 +1478,7 @@ function getTrendableExercises(){
 }
 
 function renderProgressChartSvg(points){
-  const W = 320, H = 176, padL = 34, padR = 14, padT = 16, padB = 26;
+  const W = 320, H = 176, padL = 34, padR = 22, padT = 16, padB = 26;
   const plotW = W - padL - padR, plotH = H - padT - padB;
 
   const volumes = points.map(p => p.volume);
@@ -1453,7 +1497,7 @@ function renderProgressChartSvg(points){
     const v = minV + (niceMax - minV) * (s / steps);
     const y = yFor(v);
     svg += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="${CHART_INK.line}" stroke-width="1"/>`;
-    svg += `<text x="${padL - 6}" y="${y + 3}" text-anchor="end" font-size="9" fill="${CHART_INK.muted}" font-family="ui-monospace,monospace">${Math.round(v)}</text>`;
+    svg += `<text x="${padL - 6}" y="${y + 3}" text-anchor="end" font-size="9" fill="${CHART_INK.muted}" font-family="ui-monospace,monospace">${formatCompactLoad(v)}</text>`;
   }
 
   // Line segments, colored by the ending point's trend status.
@@ -1479,7 +1523,7 @@ function renderProgressChartSvg(points){
   const last = points[points.length - 1];
   const lx = xFor(points.length - 1), ly = yFor(last.volume);
   const labelAbove = ly > padT + 14;
-  svg += `<text x="${lx}" y="${labelAbove ? ly - 10 : ly + 18}" text-anchor="middle" font-size="11" font-weight="700" fill="${CHART_INK.text}" font-family="ui-monospace,monospace">${Math.round(last.volume)}</text>`;
+  svg += `<text x="${lx}" y="${labelAbove ? ly - 10 : ly + 18}" text-anchor="middle" font-size="11" font-weight="700" fill="${CHART_INK.text}" font-family="ui-monospace,monospace">${formatCompactLoad(last.volume)}</text>`;
 
   return `<svg viewBox="0 0 ${W} ${H}" class="progress-chart" role="img" aria-label="Volume trend over time">${svg}</svg>`;
 }
@@ -1488,19 +1532,19 @@ function renderProgressSummaryHtml(points){
   const last = points[points.length - 1];
   const unit = getWeightUnit();
   if(!last.status){
-    return `First logged session — ${Math.round(last.volume)} ${unit} total volume. Log it again to see a trend.`;
+    return `First logged session — ${formatCompactLoad(last.volume)} ${unit} total volume. Log it again to see a trend.`;
   }
   const pct = Math.abs(Math.round(last.diffPct));
   if(last.status === 'stable'){
-    return `<span class="trend-flat">→</span> About the same as last time (${Math.round(last.volume)} ${unit})`;
+    return `<span class="trend-flat">→</span> About the same as last time (${formatCompactLoad(last.volume)} ${unit})`;
   }
   const cls = last.status === 'improved' ? 'trend-up' : 'trend-down';
   const arrow = last.status === 'improved' ? '↑' : '↓';
   const verb = last.status === 'improved' ? 'up' : 'down';
-  return `<span class="${cls}">${arrow}</span> ${verb} ${pct}% vs last time (${Math.round(last.volume)} ${unit})`;
+  return `<span class="${cls}">${arrow}</span> ${verb} ${pct}% vs last time (${formatCompactLoad(last.volume)} ${unit})`;
 }
 
-function renderProgressSessionList(points, container){
+function renderProgressSessionList(points, container, hasOlder, onLoadOlder){
   container.innerHTML = '';
   [...points].reverse().forEach(p => {
     const row = document.createElement('div');
@@ -1512,7 +1556,7 @@ function renderProgressSessionList(points, container){
 
     const volSpan = document.createElement('span');
     volSpan.className = 'progress-session-volume';
-    volSpan.textContent = Math.round(p.volume) + ' ' + getWeightUnit();
+    volSpan.textContent = formatCompactLoad(p.volume) + ' ' + getWeightUnit();
 
     const badge = document.createElement('span');
     if(p.status){
@@ -1526,6 +1570,15 @@ function renderProgressSessionList(points, container){
     row.appendChild(dateSpan); row.appendChild(volSpan); row.appendChild(badge);
     container.appendChild(row);
   });
+
+  if(hasOlder){
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'load-older-btn';
+    btn.textContent = 'Load older sessions';
+    btn.addEventListener('click', onLoadOlder);
+    container.appendChild(btn);
+  }
 }
 
 const progressExerciseSelect = document.getElementById('progressExerciseSelect');
@@ -1534,11 +1587,33 @@ const progressLegend = document.getElementById('progressLegend');
 const progressSummary = document.getElementById('progressSummary');
 const progressSessionList = document.getElementById('progressSessionList');
 
+// Progress defaults to a rolling 28-day ("4 week") window of the most recent
+// sessions for the selected exercise, so the chart/list stay compact even
+// after months of logging. Anchored to the exercise's own most recent
+// session (not real "today") so an exercise you haven't trained recently
+// doesn't render an empty window. "Load older" grows the window 28 days at
+// a time; it resets to 28 only when the user switches exercises.
+let progressWindowDays = 28;
+
+function windowByDays(points, days){
+  if(points.length === 0) return points;
+  const anchor = new Date(points[points.length - 1].date);
+  const cutoff = new Date(anchor);
+  cutoff.setHours(0, 0, 0, 0);
+  cutoff.setDate(cutoff.getDate() - (days - 1));
+  return points.filter(p => new Date(p.date) >= cutoff);
+}
+
 function renderProgressForExercise(name){
-  const points = getExerciseTrend(name);
+  const allPoints = getExerciseTrend(name);
+  const points = windowByDays(allPoints, progressWindowDays);
   progressChartWrap.innerHTML = renderProgressChartSvg(points);
   progressSummary.innerHTML = renderProgressSummaryHtml(points);
-  renderProgressSessionList(points, progressSessionList);
+  const hasOlder = points.length < allPoints.length;
+  renderProgressSessionList(points, progressSessionList, hasOlder, () => {
+    progressWindowDays += 28;
+    renderProgressForExercise(name);
+  });
 }
 
 function renderProgress(){
@@ -1567,7 +1642,10 @@ function renderProgress(){
   progressExerciseSelect.value = selected;
   renderProgressForExercise(selected);
 }
-progressExerciseSelect.addEventListener('change', (e) => renderProgressForExercise(e.target.value));
+progressExerciseSelect.addEventListener('change', (e) => {
+  progressWindowDays = 28;
+  renderProgressForExercise(e.target.value);
+});
 
 // ---------- Attendance (weekly & monthly load + attendance tracking) ----------
 // Deliberately independent of the per-exercise Progress feature above: its
@@ -1654,6 +1732,39 @@ function getMonthlyAggregates(){
     .sort((a, b) => a.periodStart - b.periodStart);
 }
 
+function yearStartOf(date){
+  const d = new Date(date);
+  return new Date(d.getFullYear(), 0, 1);
+}
+function yearLabel(yearStart){
+  return String(yearStart.getFullYear());
+}
+function daysInYear(yearStart){
+  const y = yearStart.getFullYear();
+  return ((y % 4 === 0 && y % 100 !== 0) || y % 400 === 0) ? 366 : 365;
+}
+
+function getYearlyAggregates(){
+  const map = new Map();
+  history.forEach(entry => {
+    const ys = yearStartOf(entry.date);
+    const key = dateKey(ys);
+    if(!map.has(key)) map.set(key, { periodStart: ys, days: new Set(), load: 0 });
+    const agg = map.get(key);
+    agg.days.add(dateKey(new Date(entry.date)));
+    agg.load += totalLoadForEntry(entry);
+  });
+  return [...map.values()]
+    .map(agg => ({
+      periodStart: agg.periodStart,
+      label: yearLabel(agg.periodStart),
+      attendance: agg.days.size,
+      possibleDays: daysInYear(agg.periodStart),
+      load: agg.load
+    }))
+    .sort((a, b) => a.periodStart - b.periodStart);
+}
+
 // Load compares by percent change (same ±2% "stable" band as Progress, for a
 // consistent meaning of "stable" app-wide) — attendance compares by plain
 // day-count delta, since "2% more days" isn't a meaningful idea at this scale.
@@ -1676,7 +1787,7 @@ function attachAttendanceTrend(points){
 }
 
 function renderLoadLineSvg(points){
-  const W = 320, H = 150, padL = 34, padR = 14, padT = 14, padB = 24;
+  const W = 320, H = 150, padL = 34, padR = 22, padT = 14, padB = 24;
   const plotW = W - padL - padR, plotH = H - padT - padB;
   const values = points.map(p => p.load);
   const minV = Math.min(0, ...values);
@@ -1688,7 +1799,7 @@ function renderLoadLineSvg(points){
   for(let s = 0; s <= 3; s++){
     const v = minV + (niceMax - minV) * (s / 3), y = yFor(v);
     svg += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="${CHART_INK.line}" stroke-width="1"/>`;
-    svg += `<text x="${padL - 6}" y="${y + 3}" text-anchor="end" font-size="9" fill="${CHART_INK.muted}" font-family="ui-monospace,monospace">${Math.round(v)}</text>`;
+    svg += `<text x="${padL - 6}" y="${y + 3}" text-anchor="end" font-size="9" fill="${CHART_INK.muted}" font-family="ui-monospace,monospace">${formatCompactLoad(v)}</text>`;
   }
   for(let i = 1; i < points.length; i++){
     const x1 = xFor(i - 1), y1 = yFor(points[i - 1].load), x2 = xFor(i), y2 = yFor(points[i].load);
@@ -1701,7 +1812,7 @@ function renderLoadLineSvg(points){
   const last = points[points.length - 1];
   const lx = xFor(points.length - 1), ly = yFor(last.load);
   const above = ly > padT + 14;
-  svg += `<text x="${lx}" y="${above ? ly - 10 : ly + 18}" text-anchor="middle" font-size="11" font-weight="700" fill="${CHART_INK.text}" font-family="ui-monospace,monospace">${Math.round(last.load)}</text>`;
+  svg += `<text x="${lx}" y="${above ? ly - 10 : ly + 18}" text-anchor="middle" font-size="11" font-weight="700" fill="${CHART_INK.text}" font-family="ui-monospace,monospace">${formatCompactLoad(last.load)}</text>`;
   return `<svg viewBox="0 0 ${W} ${H}" class="attendance-chart" role="img" aria-label="Total load trend">${svg}</svg>`;
 }
 
@@ -1739,8 +1850,35 @@ const attendanceList = document.getElementById('attendanceList');
 
 let attendancePeriod = 'week';
 
+// Each period tab shows a compact window by default rather than the entire
+// history at once — Weekly shows the last 4 weeks ("about a month"), Monthly
+// resets each January to just the current year's months so it doesn't grow
+// forever, and Yearly shows the last 5 years. "Load older" grows that
+// period's window explicitly (stored here); trend badges are always computed
+// on the FULL chronological chain first (attachLoadTrend/attachAttendanceTrend
+// below), then the result is sliced down for display — so a week's trend
+// arrow still correctly reflects the real previous week even when that
+// earlier week has scrolled out of the visible window, and the first week of
+// a new month still compares against the last week of the previous one with
+// no special-casing needed.
+const attendanceWindowOverride = { week: null, month: null, year: null };
+
+function attendanceChunkSize(period){
+  return period === 'week' ? 4 : period === 'year' ? 5 : 12;
+}
+
+function defaultAttendanceVisibleCount(period, points){
+  if(period === 'week') return Math.min(4, points.length);
+  if(period === 'year') return Math.min(5, points.length);
+  const thisYear = new Date().getFullYear();
+  const count = points.filter(p => p.periodStart.getFullYear() === thisYear).length;
+  return Math.min(Math.max(count, 1), points.length);
+}
+
 function renderAttendance(){
-  const raw = attendancePeriod === 'week' ? getWeeklyAggregates() : getMonthlyAggregates();
+  const raw = attendancePeriod === 'week' ? getWeeklyAggregates()
+    : attendancePeriod === 'month' ? getMonthlyAggregates()
+    : getYearlyAggregates();
 
   if(raw.length === 0){
     attendanceLoadChartWrap.innerHTML = '<div class="attendance-empty">Log a workout to start tracking attendance and load.</div>';
@@ -1750,16 +1888,20 @@ function renderAttendance(){
     return;
   }
 
-  const points = attachAttendanceTrend(attachLoadTrend(raw));
+  const allPoints = attachAttendanceTrend(attachLoadTrend(raw));
+  const visibleCount = attendanceWindowOverride[attendancePeriod] ?? defaultAttendanceVisibleCount(attendancePeriod, allPoints);
+  const points = allPoints.slice(-visibleCount);
+  const hasOlder = points.length < allPoints.length;
+
   attendanceLoadChartWrap.innerHTML = renderLoadLineSvg(points);
   attendanceDaysChartWrap.innerHTML = renderAttendanceBarSvg(points);
 
   const last = points[points.length - 1];
   const unit = getWeightUnit();
-  const periodWord = attendancePeriod === 'week' ? 'week' : 'month';
+  const periodWord = attendancePeriod === 'week' ? 'week' : attendancePeriod === 'month' ? 'month' : 'year';
   let summaryHtml;
   if(!last.loadStatus){
-    summaryHtml = `First ${periodWord} logged — ${last.attendance}/${last.possibleDays} days, ${Math.round(last.load)} ${unit} total load.`;
+    summaryHtml = `First ${periodWord} logged — ${last.attendance}/${last.possibleDays} days, ${formatCompactLoad(last.load)} ${unit} total load.`;
   } else {
     const loadCls = last.loadStatus === 'improved' ? 'trend-up' : last.loadStatus === 'declined' ? 'trend-down' : 'trend-flat';
     const loadArrow = last.loadStatus === 'improved' ? '↑' : last.loadStatus === 'declined' ? '↓' : '→';
@@ -1791,7 +1933,7 @@ function renderAttendance(){
     bottom.className = 'attendance-row-bottom';
     const loadSpan = document.createElement('span');
     loadSpan.className = 'attendance-load-value';
-    loadSpan.textContent = Math.round(p.load) + ' ' + unit + ' load';
+    loadSpan.textContent = formatCompactLoad(p.load) + ' ' + unit + ' load';
     const loadBadge = document.createElement('span');
     if(p.loadStatus){
       loadBadge.className = 'progress-session-badge ' + p.loadStatus;
@@ -1805,6 +1947,18 @@ function renderAttendance(){
     row.appendChild(top); row.appendChild(bottom);
     attendanceList.appendChild(row);
   });
+
+  if(hasOlder){
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'load-older-btn';
+    btn.textContent = `Load older ${periodWord}s`;
+    btn.addEventListener('click', () => {
+      attendanceWindowOverride[attendancePeriod] = Math.min(visibleCount + attendanceChunkSize(attendancePeriod), allPoints.length);
+      renderAttendance();
+    });
+    attendanceList.appendChild(btn);
+  }
 }
 
 attendanceTabs.addEventListener('click', (e) => {
@@ -2975,6 +3129,11 @@ async function syncAttendanceSheets(token){
   await ensureAggregateSheet(token, 'Monthly Progress', ['Month', 'Days Attended', 'Total Load']);
   const monthlyRows = monthly.map(m => [ monthLabel(m.periodStart), m.attendance, Math.round(m.load) ]);
   await overwriteAggregateSheet(token, 'Monthly Progress', monthlyRows, 3);
+
+  const yearly = getYearlyAggregates();
+  await ensureAggregateSheet(token, 'Yearly Progress', ['Year', 'Days Attended', 'Total Load']);
+  const yearlyRows = yearly.map(y => [ yearLabel(y.periodStart), y.attendance, Math.round(y.load) ]);
+  await overwriteAggregateSheet(token, 'Yearly Progress', yearlyRows, 3);
 }
 
 async function syncAll(showAlerts){
