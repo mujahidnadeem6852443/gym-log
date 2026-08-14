@@ -496,6 +496,19 @@
   .edit-actions{display:flex; gap:8px; margin-top:12px;}
   .edit-actions button{flex:1;}
 
+  /* Body Weight — deliberately neutral: no green/red "improved/declined"
+     value judgment like Progress uses, since more or less weight isn't
+     inherently good or bad (depends entirely on the person's own goal). */
+  .bw-card{ background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px; }
+  .bw-log-form{ margin-top:12px; }
+  .bw-form-row{ display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px; }
+  .bw-date-input, .bw-weight-input{
+    background:var(--panel-2); border:1px solid var(--line); border-radius:8px;
+    color:var(--text); font-family:var(--mono); font-size:16px; padding:9px 8px; width:100%; outline:none;
+  }
+  .bw-date-input:focus, .bw-weight-input:focus{ border-color:var(--blue); }
+  .bw-trend-value{ color:var(--text); }
+
   /* Undo-delete toast */
   .toast{
     position:fixed; left:16px; right:16px;
@@ -693,6 +706,32 @@
   </div>
   <div id="historyList"></div>
   <div class="empty-note" id="historyEmptyNote" style="display:none;">No saved workouts yet.</div>
+</section>
+
+<section>
+  <div class="section-title">Body Weight</div>
+  <div class="bw-card">
+    <button class="add-exercise-btn" id="bwToggleBtn" type="button">+ Log Weight</button>
+
+    <div class="bw-log-form" id="bwLogForm" style="display:none;">
+      <div class="bw-form-row">
+        <div class="set-field">
+          <label>Date</label>
+          <input type="date" id="bwDateInput" class="bw-date-input">
+        </div>
+        <div class="set-field">
+          <label>Weight</label>
+          <input type="number" id="bwWeightInput" class="bw-weight-input" inputmode="decimal" step="0.1" placeholder="0">
+        </div>
+      </div>
+      <button class="save-workout-btn btn-stop" id="bwSaveBtn" type="button">Save Weight</button>
+    </div>
+
+    <div id="bwChartWrap"></div>
+    <div id="bwSummary" class="progress-summary"></div>
+    <div class="empty-note" id="bwEmptyNote" style="display:none;">No weight logged yet.</div>
+    <div id="bwLogList" class="progress-session-list"></div>
+  </div>
 </section>
 
 <div class="toast" id="toast"></div>
