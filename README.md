@@ -39,6 +39,16 @@ Exercises can contain as many sets as needed.
 
 Your current workout is automatically saved locally while you are entering it.
 
+A **Today's load** figure sits above the exercise list, updating live as you
+log sets — the same reps × weight, summed-across-sets math behind the
+Weekly/Monthly/Yearly Attendance totals below, just scoped to today. If
+you'd already saved part of today's workout earlier and came back to log
+more, it's the saved amount plus whatever's currently in the unsaved list,
+so it always reflects the true total for the day. The same figure shows up
+next to each day in **Workout History** and in the **Calendar**'s day-detail
+view, so "how much did I lift today" is answered consistently everywhere a
+day's workout is shown.
+
 ### ⤵ Drop Sets
 
 Any set can be marked as a drop set — you finish it, drop the weight, and
@@ -155,7 +165,7 @@ the information is merged into that day's workout instead of creating unnecessar
 
 Saved workouts can also be edited from history.
 
-The list pages one calendar week at a time (same Sunday-start week used
+The list pages one calendar week at a time (same Monday-start week used
 throughout the app), defaulting to whichever week your most recent workout
 falls in. A **‹ / ›** pair above the list steps to the week before or after —
 the label always shows the exact range on screen (e.g. "Aug 9 – Aug 15"),
@@ -238,7 +248,7 @@ total work you did, week to week, month to month, and year to year.
 Switch between three views:
 
 - **Weekly** — attendance and total training load for each week, with weeks
-  starting on **Sunday**
+  starting on **Monday**
 - **Monthly** — the same two numbers rolled up by calendar month
 - **Yearly** — the same two numbers rolled up by calendar year
 

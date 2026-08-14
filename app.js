@@ -386,6 +386,23 @@ function createMuscleSelect(currentValue, onChange){
 const exerciseList = document.getElementById('exerciseList');
 const addExerciseBtn = document.getElementById('addExerciseBtn');
 const saveWorkoutBtn = document.getElementById('saveWorkoutBtn');
+const todayLoadSummary = document.getElementById('todayLoadSummary');
+
+// Today's running load — the same reps×weight-summed-across-sets math as
+// Weekly/Monthly/Yearly Attendance, just scoped to today: whatever's
+// already saved to today's history entry (if you saved earlier and came
+// back to log more) plus whatever's currently in the unsaved exercise
+// list below. Updates live as you add sets, same as everything else
+// renderExercises() keeps in sync.
+function renderTodayLoadSummary(){
+  const todayKey = dateKey(new Date());
+  const existing = history.find(h => dateKey(new Date(h.date)) === todayKey);
+  const savedLoad = existing ? totalLoadForEntry(existing) : 0;
+  const draftLoad = current.exercises.reduce((sum, ex) => sum + computeSetVolume(ex.sets, ex.bodyweight), 0);
+  const total = savedLoad + draftLoad;
+  if(total <= 0){ todayLoadSummary.textContent = ''; return; }
+  todayLoadSummary.innerHTML = `Today's load: <span class="today-load-value">${formatCompactLoad(total)} ${getWeightUnit()}</span>`;
+}
 
 function addExercise(focus){
   const ex = { id: uid(), name:'', muscle:'', sets:[{reps:'', weight:''}] };
@@ -814,6 +831,7 @@ function renderExercises(focusId){
     exerciseList.appendChild(card);
     if(focusId === ex.id) nameInput.focus();
   });
+  renderTodayLoadSummary();
 }
 
 addExerciseBtn.addEventListener('click', () => addExercise(true));
@@ -900,7 +918,7 @@ const historyPeriodLabel = document.getElementById('historyPeriodLabel');
 const historyPeriodPrev = document.getElementById('historyPeriodPrev');
 const historyPeriodNext = document.getElementById('historyPeriodNext');
 
-// History pages one calendar week at a time (same Sunday-start week as
+// History pages one calendar week at a time (same Monday-start week as
 // Attendance) with left/right arrows — no growing list. Defaults to the
 // week containing your most recent workout; the right arrow disables once
 // you're on that week, since there's nothing newer to page to. A search
@@ -953,7 +971,7 @@ function renderHistory(){
     head.innerHTML = `
       <div>
         <div class="history-date">${formatDate(entry.date)}<span class="sync-tag ${entry.synced?'synced':''}">${entry.synced?'Synced':'Pending'}</span></div>
-        <div class="history-meta">${entry.exercises.length} exercise${entry.exercises.length===1?'':'s'} · ${setCount} set${setCount===1?'':'s'} · ${fmt(entry.durationMs||0)}</div>
+        <div class="history-meta">${entry.exercises.length} exercise${entry.exercises.length===1?'':'s'} · ${setCount} set${setCount===1?'':'s'} · ${fmt(entry.durationMs||0)} · ${formatCompactLoad(totalLoadForEntry(entry))} ${getWeightUnit()} load</div>
       </div>
       <div class="history-chevron">▾</div>
     `;
@@ -1309,7 +1327,7 @@ function muscleAbbrForDay(entries){
 }
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-const DOW = ['S','M','T','W','T','F','S'];
+const DOW = ['M','T','W','T','F','S','S'];
 
 function renderCalendar(){
   calMonthLabel.textContent = MONTH_NAMES[calView.month] + ' ' + calView.year;
@@ -1322,7 +1340,7 @@ function renderCalendar(){
   });
 
   const firstDay = new Date(calView.year, calView.month, 1);
-  const startWeekday = firstDay.getDay();
+  const startWeekday = (firstDay.getDay() + 6) % 7; // Monday-start: Sun(0)→6, Mon(1)→0, ...
   const daysInMonth = new Date(calView.year, calView.month + 1, 0).getDate();
   const map = entriesByDay();
   const todayKey = dateKey(today);
@@ -1379,6 +1397,13 @@ function showDayDetail(key){
       durationLine.className = 'dd-duration';
       durationLine.textContent = 'Time: ' + fmt(totalDuration);
       dayDetailBody.appendChild(durationLine);
+    }
+    const totalLoad = entries.reduce((sum, e) => sum + totalLoadForEntry(e), 0);
+    if(totalLoad > 0){
+      const loadLine = document.createElement('div');
+      loadLine.className = 'dd-duration';
+      loadLine.textContent = 'Load: ' + formatCompactLoad(totalLoad) + ' ' + getWeightUnit();
+      dayDetailBody.appendChild(loadLine);
     }
     entries.forEach(entry => {
       entry.exercises.forEach(ex => {
@@ -1697,11 +1722,11 @@ function totalLoadForEntry(entry){
   return entry.exercises.reduce((sum, ex) => sum + computeSetVolume(ex.sets, ex.bodyweight), 0);
 }
 
-// Sunday-start week boundary — matches the calendar's own S M T W T F S layout.
+// Monday-start week boundary — matches the calendar's own M T W T F S S layout.
 function weekStartOf(date){
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() - d.getDay());
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
   return d;
 }
 function weekEndOf(weekStart){
