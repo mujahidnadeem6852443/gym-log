@@ -2177,6 +2177,7 @@ bwSaveBtn.addEventListener('click', () => {
   bwLogForm.style.display = 'none';
   bwToggleBtn.textContent = '+ Log Weight';
   renderBodyweight();
+  syncAll(false); // best-effort background sync, same as saving a workout
 });
 
 // Chronological (oldest-first) trend, mirroring getExerciseTrend's shape —
@@ -2993,7 +2994,7 @@ async function migrateDateSheetIfNeeded(token, title){
 // before this update is left behind in the old format.
 async function migrateAllDateSheets(token){
   if(!sheetMetaCache) await loadSheetMeta(token);
-  const skip = new Set(['Overview', 'Weekly Progress', 'Monthly Progress']);
+  const skip = new Set(['Overview', 'Weekly Progress', 'Monthly Progress', 'Yearly Progress', 'Body Weight']);
   const titles = Object.keys(sheetMetaCache).filter(t => !skip.has(t) && !t.endsWith(' (migrating)'));
   for(const title of titles){
     try{ await migrateDateSheetIfNeeded(token, title); }
@@ -3273,7 +3274,7 @@ async function restoreFromSheet(){
 
   const res = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}` +
-    `?fields=${encodeURIComponent('sheets(properties(title),data(rowData(values(formattedValue,note))))')}`,
+    `?fields=${encodeURIComponent('sheets(properties(title),data(rowData(values(formattedValue,effectiveValue,note))))')}`,
     { headers:{ Authorization:'Bearer '+token } }
   );
   if(!res.ok) throw new Error('Could not read spreadsheet (' + res.status + ')');
@@ -3285,6 +3286,14 @@ async function restoreFromSheet(){
   const existingIds = new Set();
   history.forEach(h => (h.mergedIds && h.mergedIds.length ? h.mergedIds : [h.id]).forEach(id => existingIds.add(id)));
   const restored = [];
+
+  // Body Weight is independent primary data (unlike Weekly/Monthly/Yearly
+  // Progress, which are purely derived from workout history and so never
+  // need reading back) — restore has to actually read it. Same "never
+  // touch what's already here" policy as workouts: only dates missing
+  // locally get added, an existing local entry for a date always wins.
+  const existingWeightDates = new Set(bodyweightLog.map(e => dateKey(new Date(e.date))));
+  let restoredWeightCount = 0;
 
   (data.sheets || []).forEach(sheet => {
     const title = sheet.properties.title;
@@ -3306,6 +3315,26 @@ async function restoreFromSheet(){
         const unitCell = overviewRows[4] && overviewRows[4].values && overviewRows[4].values[1];
         const sheetUnit = ((unitCell && unitCell.formattedValue) || '').toLowerCase();
         if(sheetUnit === 'kg' || sheetUnit === 'lb') localStorage.setItem(K_WEIGHT_UNIT, sheetUnit);
+      }
+      return;
+    }
+    if(title === 'Body Weight'){
+      const rows = (sheet.data && sheet.data[0] && sheet.data[0].rowData) || [];
+      for(let i = 1; i < rows.length; i++){ // row 0 is the header
+        const cells = rows[i].values || [];
+        const dateStr = (cells[0] && cells[0].formattedValue) || '';
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+        if(!m) continue;
+        if(existingWeightDates.has(dateStr)) continue; // local entry for this date wins, same as workouts
+        const weightCell = cells[1];
+        const weight = (weightCell && weightCell.effectiveValue && typeof weightCell.effectiveValue.numberValue === 'number')
+          ? weightCell.effectiveValue.numberValue
+          : parseFloat(weightCell && weightCell.formattedValue);
+        if(!(weight > 0)) continue;
+        const [, y, mo, d] = m;
+        bodyweightLog.push({ id: uid(), date: new Date(Number(y), Number(mo) - 1, Number(d), 12).toISOString(), weight });
+        existingWeightDates.add(dateStr);
+        restoredWeightCount++;
       }
       return;
     }
@@ -3372,7 +3401,11 @@ async function restoreFromSheet(){
     renderProgress();
     renderAttendance();
   }
-  return restored.length;
+  if(restoredWeightCount){
+    saveBodyweightLog();
+    renderBodyweight();
+  }
+  return { workouts: restored.length, weights: restoredWeightCount };
 }
 
 // ---------- Attendance Sheets sync (Weekly Progress / Monthly Progress tabs) ----------
@@ -3458,6 +3491,24 @@ async function syncAttendanceSheets(token){
   await overwriteAggregateSheet(token, 'Yearly Progress', yearlyRows, 3);
 }
 
+// Body Weight, unlike the three tabs above, isn't derived from workout
+// history — bodyweightLog is its own independent source of truth, so this
+// tab is both written here AND read back in restoreFromSheet(), whereas
+// Weekly/Monthly/Yearly Progress are write-only (nothing to restore since
+// they'd just be recomputed from history anyway).
+//
+// The Date column is written with a leading apostrophe to force Sheets to
+// store it as literal text ("2026-08-16") instead of auto-converting it to
+// a date serial — restore parses that text back directly, so it never
+// depends on the spreadsheet's locale/date-display settings.
+async function syncBodyweightSheet(token){
+  await ensureAggregateSheet(token, 'Body Weight', ['Date', 'Weight (KG)']);
+  const rows = [...bodyweightLog]
+    .sort((a, b) => new Date(a.date) - new Date(b.date))
+    .map(e => [ "'" + sheetDateStr(new Date(e.date)), e.weight ]);
+  await overwriteAggregateSheet(token, 'Body Weight', rows, 2);
+}
+
 async function syncAll(showAlerts){
   const hasClientId = !!localStorage.getItem(K_CLIENT_ID);
   if(!hasClientId){
@@ -3488,6 +3539,7 @@ async function syncAll(showAlerts){
     // shouldn't fail the whole sync — the workouts above already synced
     // fine, and the next sync retries this.
     try{ await syncAttendanceSheets(token); } catch(e){ /* retried next sync */ }
+    try{ await syncBodyweightSheet(token); } catch(e){ /* retried next sync */ }
     try{ await syncDisplayNameToSheet(token); } catch(e){ /* retried next sync */ }
     try{ await syncWeightUnitToSheet(token); } catch(e){ /* retried next sync */ }
     // Catches any date tab that migrateAllDateSheets already covered at
@@ -3511,13 +3563,16 @@ async function syncAll(showAlerts){
 sheetSyncNow.addEventListener('click', () => syncAll(true));
 
 restoreFromSheetBtn.addEventListener('click', async () => {
-  if(!confirm('Rebuild workout history from your Google Sheet? Anything already saved on this phone stays untouched — this only adds workouts found in the Sheet that aren\'t here yet.')) return;
+  if(!confirm('Rebuild workout history and body weight log from your Google Sheet? Anything already saved on this phone stays untouched — this only adds workouts and weight entries found in the Sheet that aren\'t here yet.')) return;
   restoreFromSheetBtn.disabled = true;
   const originalText = restoreFromSheetBtn.textContent;
   restoreFromSheetBtn.textContent = 'Restoring…';
   try{
-    const count = await restoreFromSheet();
-    setSyncStatus('ok', count > 0 ? `Restored ${count} workout${count===1?'':'s'} from Sheet.` : 'Nothing new to restore — already up to date.');
+    const { workouts, weights } = await restoreFromSheet();
+    const parts = [];
+    if(workouts > 0) parts.push(`${workouts} workout${workouts===1?'':'s'}`);
+    if(weights > 0) parts.push(`${weights} weight entr${weights===1?'y':'ies'}`);
+    setSyncStatus('ok', parts.length ? `Restored ${parts.join(' and ')} from Sheet.` : 'Nothing new to restore — already up to date.');
     refreshSyncBadge();
   } catch(err){
     setSyncStatus('err', isAuthError(err)

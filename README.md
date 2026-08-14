@@ -329,12 +329,19 @@ someone wants, so the chart, arrows, and log rows only ever say "up,"
 "down," or "stable" (±2%, same threshold as everywhere else in the app),
 never implying either direction is good or bad.
 
-A couple of things worth knowing about the current version:
+A couple of things worth knowing:
 
-- **Local-only, for now.** Body weight logs live in this browser's storage
-  the same way local-only workouts do — they don't yet sync to Google
-  Sheets or survive a **Restore From Google Sheets** the way workouts do.
-  That's a deliberate scope decision for this first pass, not a bug.
+- **Fully synced to Google Sheets**, same as workouts and Attendance — every
+  log gets written to its own **Body Weight** tab (see **Google Sheet
+  Structure** below), and **Restore From Google Sheets** brings any weight
+  entries logged on another device into this one. Unlike Weekly/Monthly/
+  Yearly Progress (which are purely derived from your workout history),
+  body weight is its own independent data, so it's actually read back on
+  restore, not just written.
+- **Restore never overwrites a local entry.** If you logged a weight for a
+  date on this device, that value wins — restore only adds entries for
+  dates you don't already have here, same "never touch what's already
+  saved" policy workouts follow.
 - **Independent of your workout weight unit setting** in name only — it
   reads the same kg/lb preference from Settings, so switching units there
   relabels Body Weight too.
@@ -510,7 +517,8 @@ Gym Log Data
 ```
 
 It contains an `Overview` tab, a `Weekly Progress` tab, a `Monthly Progress`
-tab, a `Yearly Progress` tab, and every workout day gets its own date tab.
+tab, a `Yearly Progress` tab, a `Body Weight` tab, and every workout day
+gets its own date tab.
 
 Example:
 
@@ -521,6 +529,7 @@ Gym Log Data
 ├── Weekly Progress
 ├── Monthly Progress
 ├── Yearly Progress
+├── Body Weight
 ├── 6 Aug 2026
 ├── 7 Aug 2026
 ├── 8 Aug 2026
@@ -610,6 +619,20 @@ time, a calendar half-year at a time, 5 years at a time) is a UI
 convenience for the app screen only, not a limit on what's synced or
 storable.
 
+The `Body Weight` tab holds one row per logged day:
+
+| Date | Weight (KG) |
+|------|-------------|
+| 2026-08-10 | 75.2 |
+| 2026-08-12 | 74.5 |
+
+Like the three tabs above, it's fully rewritten each sync from your local
+weight log — but unlike them, it **is** read back on restore, since body
+weight isn't derived from anything else the way Weekly/Monthly/Yearly
+Progress are. The `Date` column is written as literal text (not a Sheets
+date value) specifically so restoring never depends on the spreadsheet's
+locale or date-display settings.
+
 ---
 
 ## 🔄 Duplicate-Safe Sync
@@ -641,7 +664,7 @@ The app also tracks workout IDs that were merged into a same-day history record 
 
 Google Sheets also acts as a backup.
 
-If local browser data is lost, sign in with the same Google account and restore your workout history from its `Gym Log Data` spreadsheet.
+If local browser data is lost, sign in with the same Google account and restore your workout history — and body weight log — from its `Gym Log Data` spreadsheet.
 
 ```text
 Google Sheet
@@ -650,10 +673,10 @@ Google Sheet
 Restore
      |
      v
-Local Gym Log history
+Local Gym Log history + Body Weight log
 ```
 
-Restore is designed to avoid adding the same workout repeatedly if it already exists locally.
+Restore is designed to avoid adding the same workout — or the same day's weight entry — repeatedly if it already exists locally.
 
 ---
 
