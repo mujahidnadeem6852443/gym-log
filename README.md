@@ -307,6 +307,38 @@ A few things worth knowing:
 - **Big totals are compacted** the same way as Progress — `34.9K` instead
   of `34932` — in the chart, the summary line, and every row of the list.
 
+### ⚖️ Body Weight
+
+Separate from your workouts entirely — Gym Log can also track your body
+weight over time, at the very bottom of the page.
+
+A **+ Log Weight** button is the only thing shown by default; tap it to
+reveal a small date + weight form (Cancel or Save hides it again). Logging
+on a date you've already logged updates that entry instead of creating a
+duplicate, so there's always at most one weight per day. Reopening the form
+on today's date pre-fills whatever you already logged today, so you can
+correct it without hunting for the right row below.
+
+The chart, trend summary, and log list are always visible once you have at
+least one entry — same visual language as the per-exercise Progress chart
+above (a line, a compact plain-language summary, a full log underneath),
+with one deliberate difference: **the coloring is neutral.** Progress marks
+sessions green/red for improved/declined because more volume is the goal;
+body weight doesn't work that way — more or less can both be exactly what
+someone wants, so the chart, arrows, and log rows only ever say "up,"
+"down," or "stable" (±2%, same threshold as everywhere else in the app),
+never implying either direction is good or bad.
+
+A couple of things worth knowing about the current version:
+
+- **Local-only, for now.** Body weight logs live in this browser's storage
+  the same way local-only workouts do — they don't yet sync to Google
+  Sheets or survive a **Restore From Google Sheets** the way workouts do.
+  That's a deliberate scope decision for this first pass, not a bug.
+- **Independent of your workout weight unit setting** in name only — it
+  reads the same kg/lb preference from Settings, so switching units there
+  relabels Body Weight too.
+
 ### 👋 Your Name
 
 Gym Log can greet you by name — a small personal touch, not an account

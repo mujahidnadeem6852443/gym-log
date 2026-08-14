@@ -14,6 +14,7 @@ const SESSION_MAX_MS = 3 * 60 * 60 * 1000; // 3 hours — a full workout should 
 const K_PENDING_DELETES = 'gymlog_pending_deletes';
 const K_EXERCISE_DICT = 'gymlog_exercise_dict';
 const K_ACTIVE_IDENTITY = 'gymlog_active_identity';
+const K_BODYWEIGHT_LOG = 'gymlog_bodyweight_log';
 const LOCAL_IDENTITY = '__local__'; // signed-out / never-signed-in device data
 function sheetIdKey(email){ return 'gymlog_sheet_id_' + email; }
 function identityBackupKey(identity){ return 'gymlog_identity_backup_' + identity; }
@@ -23,6 +24,10 @@ let current = loadCurrent();
 let history = loadHistory();
 let timer = loadTimer();
 let exerciseDict = loadExerciseDict();
+let bodyweightLog = loadBodyweightLog();
+
+function loadBodyweightLog(){ try{ const r=localStorage.getItem(K_BODYWEIGHT_LOG); if(r) return JSON.parse(r); }catch(e){} return []; }
+function saveBodyweightLog(){ localStorage.setItem(K_BODYWEIGHT_LOG, JSON.stringify(bodyweightLog)); }
 
 function loadCurrent(){ try{ const r=localStorage.getItem(K_CURRENT); if(r) return JSON.parse(r); }catch(e){} return { exercises: [] }; }
 function saveCurrent(){ localStorage.setItem(K_CURRENT, JSON.stringify(current)); }
@@ -2123,6 +2128,169 @@ attendanceTabs.addEventListener('click', (e) => {
   renderAttendance();
 });
 
+// ---------- Body Weight ----------
+// Deliberately separate from workout Progress/Attendance above: its own
+// data (bodyweightLog, not history), its own storage key, its own chart.
+// Colors are intentionally neutral (no green="improved"/red="declined" the
+// way Progress uses) — for body weight, up or down isn't inherently good
+// or bad, it depends entirely on what the person is trying to do, so the
+// UI only ever says "up"/"down"/"stable", never implies a value judgment.
+const bwToggleBtn = document.getElementById('bwToggleBtn');
+const bwLogForm = document.getElementById('bwLogForm');
+const bwDateInput = document.getElementById('bwDateInput');
+const bwWeightInput = document.getElementById('bwWeightInput');
+const bwSaveBtn = document.getElementById('bwSaveBtn');
+const bwChartWrap = document.getElementById('bwChartWrap');
+const bwSummary = document.getElementById('bwSummary');
+const bwEmptyNote = document.getElementById('bwEmptyNote');
+const bwLogList = document.getElementById('bwLogList');
+
+const BW_COLOR = '#4da8ff'; // single neutral color for the line/dots, regardless of trend direction
+
+bwToggleBtn.addEventListener('click', () => {
+  const isOpen = bwLogForm.style.display !== 'none';
+  if(isOpen){
+    bwLogForm.style.display = 'none';
+    bwToggleBtn.textContent = '+ Log Weight';
+  } else {
+    bwLogForm.style.display = 'block';
+    bwToggleBtn.textContent = '✕ Cancel';
+    bwDateInput.value = dateKey(new Date());
+    const todayEntry = bodyweightLog.find(e => dateKey(new Date(e.date)) === dateKey(new Date()));
+    bwWeightInput.value = todayEntry ? todayEntry.weight : '';
+    bwWeightInput.focus();
+  }
+});
+
+bwSaveBtn.addEventListener('click', () => {
+  const weight = parseFloat(bwWeightInput.value);
+  if(!bwDateInput.value || !(weight > 0)){ alert('Enter a date and a weight greater than 0.'); return; }
+  const key = bwDateInput.value; // yyyy-mm-dd, already a dateKey-shaped string
+  const existing = bodyweightLog.find(e => dateKey(new Date(e.date)) === key);
+  if(existing){
+    existing.weight = weight;
+  } else {
+    const [y, m, d] = key.split('-').map(Number);
+    bodyweightLog.push({ id: uid(), date: new Date(y, m - 1, d, 12).toISOString(), weight });
+  }
+  saveBodyweightLog();
+  bwLogForm.style.display = 'none';
+  bwToggleBtn.textContent = '+ Log Weight';
+  renderBodyweight();
+});
+
+// Chronological (oldest-first) trend, mirroring getExerciseTrend's shape —
+// each point tagged with its status vs. the immediately previous log, using
+// the same ±2% "stable" band as Progress/Attendance for a consistent
+// meaning of "stable" app-wide.
+function getBodyweightTrend(){
+  const points = [...bodyweightLog].sort((a, b) => new Date(a.date) - new Date(b.date));
+  return points.map((p, i) => {
+    if(i === 0) return { ...p, status: null, diffPct: null };
+    const prev = points[i - 1];
+    const diffPct = prev.weight === 0 ? 0 : ((p.weight - prev.weight) / prev.weight) * 100;
+    const status = Math.abs(diffPct) < 2 ? 'stable' : (diffPct > 0 ? 'up' : 'down');
+    return { ...p, status, diffPct };
+  });
+}
+
+function renderBodyweightChartSvg(points){
+  const W = 320, H = 176, padL = 34, padR = 22, padT = 16, padB = 26;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+
+  const weights = points.map(p => p.weight);
+  const minV = Math.min(...weights);
+  const maxV = Math.max(...weights);
+  const pad = (maxV - minV) * 0.15 || Math.max(maxV * 0.05, 1);
+  const loV = Math.max(0, minV - pad), hiV = maxV + pad;
+
+  const xFor = (i) => points.length === 1 ? padL + plotW / 2 : padL + (i / (points.length - 1)) * plotW;
+  const yFor = (v) => padT + plotH - ((v - loV) / ((hiV - loV) || 1)) * plotH;
+
+  let svg = '';
+  const steps = 4;
+  for(let s = 0; s <= steps; s++){
+    const v = loV + (hiV - loV) * (s / steps);
+    const y = yFor(v);
+    svg += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="${CHART_INK.line}" stroke-width="1"/>`;
+    svg += `<text x="${padL - 6}" y="${y + 3}" text-anchor="end" font-size="9" fill="${CHART_INK.muted}" font-family="ui-monospace,monospace">${v.toFixed(1)}</text>`;
+  }
+
+  for(let i = 1; i < points.length; i++){
+    const x1 = xFor(i - 1), y1 = yFor(points[i - 1].weight), x2 = xFor(i), y2 = yFor(points[i].weight);
+    svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${BW_COLOR}" stroke-width="2" stroke-linecap="round"/>`;
+  }
+
+  const labelEvery = points.length <= 6 ? 1 : Math.ceil(points.length / 5);
+  points.forEach((p, i) => {
+    const x = xFor(i), y = yFor(p.weight);
+    svg += `<circle cx="${x}" cy="${y}" r="5" fill="${BW_COLOR}" stroke="${CHART_INK.ring}" stroke-width="2"/>`;
+    if(i === 0 || i === points.length - 1 || i % labelEvery === 0){
+      const d = new Date(p.date);
+      svg += `<text x="${x}" y="${H - 8}" text-anchor="middle" font-size="9" fill="${CHART_INK.muted}" font-family="ui-monospace,monospace">${d.getMonth()+1}/${d.getDate()}</text>`;
+    }
+  });
+
+  const last = points[points.length - 1];
+  const lx = xFor(points.length - 1), ly = yFor(last.weight);
+  const labelAbove = ly > padT + 14;
+  svg += `<text x="${lx}" y="${labelAbove ? ly - 10 : ly + 18}" text-anchor="middle" font-size="11" font-weight="700" fill="${CHART_INK.text}" font-family="ui-monospace,monospace">${last.weight.toFixed(1)}</text>`;
+
+  return `<svg viewBox="0 0 ${W} ${H}" class="progress-chart" role="img" aria-label="Body weight trend over time">${svg}</svg>`;
+}
+
+function renderBodyweightSummaryHtml(points){
+  const last = points[points.length - 1];
+  const unit = getWeightUnit();
+  if(!last.status){
+    return `First logged weight — ${last.weight.toFixed(1)} ${unit}. Log it again to see a trend.`;
+  }
+  const diff = Math.abs(last.weight - points[points.length - 2].weight);
+  if(last.status === 'stable'){
+    return `<span class="bw-trend-value">→</span> About the same as last time (${last.weight.toFixed(1)} ${unit})`;
+  }
+  const arrow = last.status === 'up' ? '↑' : '↓';
+  return `<span class="bw-trend-value">${arrow}</span> ${last.status} ${diff.toFixed(1)} ${unit} vs last time (${last.weight.toFixed(1)} ${unit})`;
+}
+
+function renderBodyweightList(points, container){
+  container.innerHTML = '';
+  [...points].reverse().forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'progress-session-row';
+
+    const dateSpan = document.createElement('span');
+    dateSpan.className = 'progress-session-date';
+    dateSpan.textContent = new Date(p.date).toLocaleDateString(undefined, { month:'short', day:'numeric' });
+
+    const wSpan = document.createElement('span');
+    wSpan.className = 'progress-session-volume';
+    wSpan.textContent = p.weight.toFixed(1) + ' ' + getWeightUnit();
+
+    const badge = document.createElement('span');
+    badge.className = 'progress-session-badge';
+    badge.textContent = p.status ? (p.status === 'up' ? '↑ Up' : p.status === 'down' ? '↓ Down' : '→ Stable') : 'First';
+
+    row.appendChild(dateSpan); row.appendChild(wSpan); row.appendChild(badge);
+    container.appendChild(row);
+  });
+}
+
+function renderBodyweight(){
+  const points = getBodyweightTrend();
+  if(points.length === 0){
+    bwChartWrap.innerHTML = '';
+    bwSummary.innerHTML = '';
+    bwEmptyNote.style.display = 'block';
+    bwLogList.innerHTML = '';
+    return;
+  }
+  bwEmptyNote.style.display = 'none';
+  bwChartWrap.innerHTML = renderBodyweightChartSvg(points);
+  bwSummary.innerHTML = renderBodyweightSummaryHtml(points);
+  renderBodyweightList(points, bwLogList);
+}
+
 // ---------- Google sign-in + Sheets API sync ----------
 const settingsToggle = document.getElementById('settingsToggle');
 const settingsPanel = document.getElementById('settingsPanel');
@@ -3383,6 +3551,7 @@ renderHistory();
 renderCalendar();
 renderProgress();
 renderAttendance();
+renderBodyweight();
 updateAuthUI();
 flushStalePendingDeletes(); // clean up anything left over from a session that closed early
 
