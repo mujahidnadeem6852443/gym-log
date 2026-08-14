@@ -380,6 +380,14 @@
   .progress-summary .trend-flat{ color:var(--blue); }
   .progress-summary .trend-down{ color:#ff6b6b; }
 
+  /* Today's running load — same figure Weekly/Monthly/Yearly sum up to,
+     just for today, shown live above the exercise list as you log sets. */
+  .today-load-summary{
+    text-align:center; font-size:13px; font-weight:700; color:var(--muted);
+    font-variant-numeric:tabular-nums; margin:-4px 0 14px;
+  }
+  .today-load-summary .today-load-value{ color:var(--text); }
+
   .progress-session-list{ margin-top:10px; border-top:1px solid var(--line); padding-top:4px; }
   .progress-session-row{
     display:flex; align-items:center; justify-content:space-between; gap:8px;
@@ -591,6 +599,7 @@
 
 <section>
   <div class="section-title">Today's Workout</div>
+  <div id="todayLoadSummary" class="today-load-summary"></div>
   <div id="exerciseList"></div>
   <button class="add-exercise-btn" id="addExerciseBtn">+ Add Exercise</button>
   <button class="save-workout-btn btn-stop" id="saveWorkoutBtn">Save Workout</button>
