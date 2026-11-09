@@ -211,8 +211,8 @@ renderTimer();
 // name sits at the front; matching is case-insensitive so "Bench Press" and
 // "bench press" collapse into one remembered entry (keeping whichever
 // casing you used last).
-const MUSCLE_GROUPS = ['Chest', 'Back', 'Biceps', 'Triceps', 'Shoulders', 'Legs', 'Abs'];
-const MUSCLE_ABBR = { Chest:'C', Back:'B', Biceps:'Bi', Triceps:'Tri', Shoulders:'S', Legs:'L', Abs:'A' };
+const MUSCLE_GROUPS = ['Chest', 'Back', 'Biceps', 'Triceps', 'Forearms', 'Shoulders', 'Legs', 'Abs'];
+const MUSCLE_ABBR = { Chest:'C', Back:'B', Biceps:'Bi', Triceps:'Tri', Forearms:'F', Shoulders:'S', Legs:'L', Abs:'A' };
 
 // rememberExercise(name, muscle, bodyweight) — muscle/bodyweight are both
 // optional; when omitted, whatever's already remembered for this name is
