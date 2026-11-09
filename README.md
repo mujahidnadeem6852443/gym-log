@@ -136,6 +136,7 @@ Workout days can show short muscle-group indicators such as:
 - `B` — Back
 - `Bi` — Biceps
 - `Tri` — Triceps
+- `F` — Forearms
 - `S` — Shoulders
 - `L` — Legs
 - `A` — Abs
