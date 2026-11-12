@@ -1685,6 +1685,7 @@ progressPeriodNext.addEventListener('click', () => {
 });
 
 function renderProgress(){
+  renderMuscleProgress();
   const trendable = getTrendableExercises();
   const prevSelected = progressExerciseSelect.value;
 
@@ -1712,6 +1713,133 @@ function renderProgress(){
   renderProgressForExercise(selected);
 }
 progressExerciseSelect.addEventListener('change', (e) => renderProgressForExercise(e.target.value));
+
+// ---------- Muscle-group weekly load (inside Progress) ----------
+// Answers "which muscle groups did I train this week, and is the load on
+// each going up?" Each exercise's volume (same computeSetVolume math as
+// everything else) is credited to its muscle group; a group is compared
+// against its own load in the immediately preceding calendar week
+// (Monday-start, same as Attendance/History). A group with nothing logged
+// the week before is marked "New" rather than given a made-up percentage.
+// Derived purely from history, so there's nothing to sync or restore.
+const musclePeriodNav = document.getElementById('musclePeriodNav');
+const musclePeriodLabel = document.getElementById('musclePeriodLabel');
+const musclePeriodPrev = document.getElementById('musclePeriodPrev');
+const musclePeriodNext = document.getElementById('musclePeriodNext');
+const muscleSummary = document.getElementById('muscleSummary');
+const muscleList = document.getElementById('muscleList');
+const muscleLegend = document.getElementById('muscleLegend');
+
+let musclePageWeek = null;
+
+function addDays(date, n){
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + n);
+}
+
+function getMuscleLoadsForWeek(weekStart){
+  const end = addDays(weekStart, 7);
+  const loads = new Map();
+  history.forEach(entry => {
+    const d = new Date(entry.date);
+    if(d < weekStart || d >= end) return;
+    entry.exercises.forEach(ex => {
+      const load = computeSetVolume(ex.sets, ex.bodyweight);
+      if(load <= 0) return;
+      const group = ex.muscle || 'No group';
+      loads.set(group, (loads.get(group) || 0) + load);
+    });
+  });
+  return loads;
+}
+
+function trendStatus(curr, prev){
+  if(!(prev > 0)) return { status: null, diffPct: null };
+  const diffPct = ((curr - prev) / prev) * 100;
+  return { status: Math.abs(diffPct) < 2 ? 'stable' : (diffPct > 0 ? 'improved' : 'declined'), diffPct };
+}
+
+function renderMuscleProgress(){
+  if(history.length === 0){
+    musclePeriodNav.style.display = 'none';
+    muscleLegend.style.display = 'none';
+    muscleSummary.innerHTML = '';
+    muscleList.innerHTML = '<div class="progress-empty">Log a workout with a muscle group to see your weekly load by muscle.</div>';
+    return;
+  }
+
+  const newestWeek = weekStartOf(history.reduce((a, h) => new Date(h.date) > new Date(a.date) ? h : a).date);
+  const earliestWeek = weekStartOf(history.reduce((a, h) => new Date(h.date) < new Date(a.date) ? h : a).date);
+  if(!musclePageWeek) musclePageWeek = newestWeek;
+
+  musclePeriodNav.style.display = 'flex';
+  musclePeriodLabel.textContent = weekRangeLabel(musclePageWeek);
+  musclePeriodPrev.disabled = musclePageWeek <= earliestWeek;
+  musclePeriodNext.disabled = musclePageWeek >= newestWeek;
+
+  const loads = getMuscleLoadsForWeek(musclePageWeek);
+  const prevLoads = getMuscleLoadsForWeek(addDays(musclePageWeek, -7));
+  muscleList.innerHTML = '';
+
+  if(loads.size === 0){
+    muscleLegend.style.display = 'none';
+    muscleSummary.innerHTML = '';
+    muscleList.innerHTML = '<div class="progress-empty">No muscle groups trained this week.</div>';
+    return;
+  }
+  muscleLegend.style.display = 'flex';
+
+  const unit = getWeightUnit();
+  const rows = [...loads.entries()].map(([group, load]) => ({ group, load, ...trendStatus(load, prevLoads.get(group)) }))
+    .sort((a, b) => b.load - a.load);
+  const maxLoad = rows[0].load;
+
+  const total = rows.reduce((s, r) => s + r.load, 0);
+  const prevTotal = [...prevLoads.values()].reduce((s, v) => s + v, 0);
+  const totalTrend = trendStatus(total, prevTotal);
+  let summary = `${formatCompactLoad(total)} ${unit} across ${rows.length} muscle group${rows.length === 1 ? '' : 's'}`;
+  if(totalTrend.status){
+    const cls = totalTrend.status === 'improved' ? 'trend-up' : totalTrend.status === 'declined' ? 'trend-down' : 'trend-flat';
+    const arrow = totalTrend.status === 'improved' ? '↑' : totalTrend.status === 'declined' ? '↓' : '→';
+    summary = `<span class="${cls}">${arrow}</span> ` + summary + (totalTrend.status === 'stable' ? ' · about the same as last week' : ` · ${Math.abs(Math.round(totalTrend.diffPct))}% ${totalTrend.status === 'improved' ? 'up' : 'down'} vs last week`);
+  }
+  muscleSummary.innerHTML = summary;
+
+  rows.forEach(r => {
+    const row = document.createElement('div');
+    row.className = 'muscle-row';
+
+    const top = document.createElement('div');
+    top.className = 'muscle-row-top';
+    const name = document.createElement('span');
+    name.className = 'muscle-name'; name.textContent = r.group;
+    const loadSpan = document.createElement('span');
+    loadSpan.className = 'muscle-load'; loadSpan.textContent = `${formatCompactLoad(r.load)} ${unit}`;
+    const badge = document.createElement('span');
+    if(r.status){
+      badge.className = 'progress-session-badge ' + r.status;
+      const pct = Math.abs(Math.round(r.diffPct));
+      badge.textContent = r.status === 'improved' ? `↑ ${pct}%` : r.status === 'declined' ? `↓ ${pct}%` : '→ Stable';
+    } else {
+      badge.className = 'progress-session-badge';
+      badge.textContent = 'New';
+    }
+    top.appendChild(name); top.appendChild(loadSpan); top.appendChild(badge);
+
+    const track = document.createElement('div');
+    track.className = 'muscle-bar-track';
+    const fill = document.createElement('div');
+    fill.className = 'muscle-bar-fill';
+    fill.style.width = Math.max(3, (r.load / maxLoad) * 100) + '%';
+    fill.style.background = TREND_COLOR[r.status] || TREND_COLOR.none;
+    track.appendChild(fill);
+
+    row.appendChild(top); row.appendChild(track);
+    muscleList.appendChild(row);
+  });
+}
+
+musclePeriodPrev.addEventListener('click', () => { musclePageWeek = addDays(musclePageWeek, -7); renderMuscleProgress(); });
+musclePeriodNext.addEventListener('click', () => { musclePageWeek = addDays(musclePageWeek, 7); renderMuscleProgress(); });
 
 // ---------- Attendance (weekly & monthly load + attendance tracking) ----------
 // Deliberately independent of the per-exercise Progress feature above: its
