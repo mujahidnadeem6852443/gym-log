@@ -253,8 +253,22 @@ week's total load against the previous week's. Exercises with no muscle
 group selected are counted under **No group**.
 
 Weeks start on Monday and open on the week of your most recent workout; the
-**‹ / ›** arrows step to earlier weeks. It's derived entirely from your
-history, so there's nothing extra to sync or restore.
+**‹ / ›** arrows step to earlier weeks. The card itself is derived entirely
+from your history, so there's nothing extra to sync.
+
+**Workouts you did before muscle groups existed are included too:**
+
+- An exercise with no group of its own is credited to whichever group that
+  same exercise name has been given anywhere else (newest workout first,
+  then the remembered-exercise list) — so a "Curl" logged without a group
+  still counts under Biceps once any other "Curl" has one. Nothing stored is
+  changed by this.
+- When signed in, an **Import from Google Sheet** button on the card pulls
+  everything from your Sheet (the same additive restore as in Settings):
+  workouts missing from this device come in, and workouts already here that
+  are missing a muscle group get it from the Sheet. It never overwrites a
+  group that's already set on this device. This also runs once automatically
+  per account the first time the app opens signed in.
 
 ### 📅 Attendance Progress
 
