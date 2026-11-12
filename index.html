@@ -374,6 +374,18 @@
   .legend-dot-status.improved{ background:var(--green); }
   .legend-dot-status.stable{ background:var(--blue); }
   .legend-dot-status.declined{ background:#ff6b6b; }
+  .legend-dot-status.new{ background:#8b9199; }
+
+  /* Muscle-group weekly load (second card inside the Progress section) */
+  .muscle-card{ margin-top:12px; }
+  .muscle-title{ margin-top:0; }
+  .muscle-row{ padding:9px 2px; border-bottom:1px solid var(--line); }
+  .muscle-row:last-child{ border-bottom:none; }
+  .muscle-row-top{ display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:13px; margin-bottom:6px; }
+  .muscle-name{ font-weight:700; color:var(--text); flex-shrink:0; }
+  .muscle-load{ font-family:var(--mono); color:var(--muted); font-size:12px; flex:1; text-align:right; padding-right:8px; font-variant-numeric:tabular-nums; }
+  .muscle-bar-track{ height:8px; border-radius:4px; background:var(--panel-2); overflow:hidden; }
+  .muscle-bar-fill{ height:100%; border-radius:4px; }
 
   .progress-summary{ text-align:center; font-size:13px; font-weight:700; margin:12px 0 4px; color:var(--text); }
   .progress-summary .trend-up{ color:var(--green); }
@@ -662,6 +674,23 @@
     </div>
     <div id="progressSummary" class="progress-summary"></div>
     <div id="progressSessionList" class="progress-session-list"></div>
+  </div>
+
+  <div class="progress-card muscle-card">
+    <div class="attendance-subtitle muscle-title">Muscle groups</div>
+    <div class="period-nav" id="musclePeriodNav">
+      <button class="period-nav-btn" id="musclePeriodPrev" type="button" aria-label="Previous week">‹</button>
+      <span class="period-nav-label" id="musclePeriodLabel"></span>
+      <button class="period-nav-btn" id="musclePeriodNext" type="button" aria-label="Next week">›</button>
+    </div>
+    <div id="muscleSummary" class="progress-summary"></div>
+    <div id="muscleList" class="muscle-list"></div>
+    <div class="progress-legend" id="muscleLegend">
+      <span><span class="legend-dot-status improved"></span> Up vs last week</span>
+      <span><span class="legend-dot-status stable"></span> Stable</span>
+      <span><span class="legend-dot-status declined"></span> Down</span>
+      <span><span class="legend-dot-status new"></span> New</span>
+    </div>
   </div>
 </section>
 

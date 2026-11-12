@@ -240,6 +240,22 @@ A few things worth knowing:
   at a glance. This applies everywhere a total shows up: the chart's axis
   and endpoint label, the summary line, and the session list.
 
+#### Muscle groups (weekly)
+
+Below the per-exercise chart, the Progress section also has a **Muscle
+groups** card: which muscle groups you trained in a given week, and how the
+load on each compares to the week before. Every exercise's volume (same
+reps × weight math as everywhere else) is credited to the muscle group you
+picked for it; bars are sorted by load, and each group gets a badge —
+**↑ / ↓ %** versus its own load the previous week, **Stable** within ±2%, or
+**New** if it wasn't trained the week before. A summary line compares the
+week's total load against the previous week's. Exercises with no muscle
+group selected are counted under **No group**.
+
+Weeks start on Monday and open on the week of your most recent workout; the
+**‹ / ›** arrows step to earlier weeks. It's derived entirely from your
+history, so there's nothing extra to sync or restore.
+
 ### 📅 Attendance Progress
 
 Separate from per-exercise Progress above, Gym Log also tracks how
