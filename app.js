@@ -1736,7 +1736,25 @@ function addDays(date, n){
   return new Date(date.getFullYear(), date.getMonth(), date.getDate() + n);
 }
 
-function getMuscleLoadsForWeek(weekStart){
+// Older workouts (logged before muscle groups existed, or without one
+// picked) have no group of their own. Rather than dumping them all under
+// "No group", resolve each exercise name to the group it's been given
+// anywhere else — newest history entry first, then the remembered-exercise
+// list. Read-only: nothing stored is changed.
+function buildMuscleLookup(){
+  const lookup = new Map();
+  history.forEach(entry => entry.exercises.forEach(ex => {
+    const key = ex.name.trim().toLowerCase();
+    if(ex.muscle && !lookup.has(key)) lookup.set(key, ex.muscle);
+  }));
+  exerciseDict.forEach(e => {
+    const key = e.name.trim().toLowerCase();
+    if(e.muscle && !lookup.has(key)) lookup.set(key, e.muscle);
+  });
+  return lookup;
+}
+
+function getMuscleLoadsForWeek(weekStart, lookup = buildMuscleLookup()){
   const end = addDays(weekStart, 7);
   const loads = new Map();
   history.forEach(entry => {
@@ -1745,7 +1763,7 @@ function getMuscleLoadsForWeek(weekStart){
     entry.exercises.forEach(ex => {
       const load = computeSetVolume(ex.sets, ex.bodyweight);
       if(load <= 0) return;
-      const group = ex.muscle || 'No group';
+      const group = ex.muscle || lookup.get(ex.name.trim().toLowerCase()) || 'No group';
       loads.set(group, (loads.get(group) || 0) + load);
     });
   });
@@ -1759,6 +1777,7 @@ function trendStatus(curr, prev){
 }
 
 function renderMuscleProgress(){
+  muscleImportBtn.parentElement.style.display = userEmail ? 'block' : 'none';
   if(history.length === 0){
     musclePeriodNav.style.display = 'none';
     muscleLegend.style.display = 'none';
@@ -1776,8 +1795,9 @@ function renderMuscleProgress(){
   musclePeriodPrev.disabled = musclePageWeek <= earliestWeek;
   musclePeriodNext.disabled = musclePageWeek >= newestWeek;
 
-  const loads = getMuscleLoadsForWeek(musclePageWeek);
-  const prevLoads = getMuscleLoadsForWeek(addDays(musclePageWeek, -7));
+  const lookup = buildMuscleLookup();
+  const loads = getMuscleLoadsForWeek(musclePageWeek, lookup);
+  const prevLoads = getMuscleLoadsForWeek(addDays(musclePageWeek, -7), lookup);
   muscleList.innerHTML = '';
 
   if(loads.size === 0){
@@ -1836,6 +1856,43 @@ function renderMuscleProgress(){
     row.appendChild(top); row.appendChild(track);
     muscleList.appendChild(row);
   });
+}
+
+const muscleImportBtn = document.getElementById('muscleImportBtn');
+const muscleImportNote = document.getElementById('muscleImportNote');
+
+// Pulls everything from the Google Sheet (additive — same restore as the
+// Settings button): workouts missing here come in, and exercises already
+// here that lost their muscle group get it back from the Sheet.
+async function importMuscleDataFromSheet(){
+  muscleImportBtn.disabled = true;
+  muscleImportBtn.textContent = 'Importing…';
+  muscleImportNote.textContent = '';
+  try{
+    const { workouts, muscles } = await restoreFromSheet();
+    muscleImportNote.textContent = (workouts || muscles)
+      ? `Imported ${workouts} workout${workouts===1?'':'s'}, filled muscle groups for ${muscles} exercise${muscles===1?'':'s'}.`
+      : 'Already up to date with your Google Sheet.';
+    localStorage.setItem('gymlog_sheet_import_' + userEmail, '1');
+  } catch(err){
+    muscleImportNote.textContent = isAuthError(err)
+      ? 'Google session expired — reconnect in Settings, then try again.'
+      : 'Import failed: ' + err.message;
+  } finally {
+    muscleImportBtn.disabled = false;
+    muscleImportBtn.textContent = 'Import from Google Sheet';
+  }
+}
+muscleImportBtn.addEventListener('click', importMuscleDataFromSheet);
+
+// One automatic import per account on first load while signed in, so
+// workouts done before this feature show up without any tapping. Silent on
+// failure — the button above is always there to retry.
+function autoImportFromSheetOnce(){
+  if(!userEmail || localStorage.getItem('gymlog_sheet_import_' + userEmail)) return;
+  restoreFromSheet()
+    .then(() => localStorage.setItem('gymlog_sheet_import_' + userEmail, '1'))
+    .catch(() => {});
 }
 
 musclePeriodPrev.addEventListener('click', () => { musclePageWeek = addDays(musclePageWeek, -7); renderMuscleProgress(); });
@@ -2606,7 +2663,7 @@ function initTokenClientIfReady(){
       // requestAccessToken off a real click, in which case this quietly
       // fails and the "Reconnect" button (still shown by updateAuthUI
       // above) is the fallback.
-      getValidToken().then(() => { updateAuthUI(); syncAll(false); }).catch(() => { updateAuthUI(); });
+      getValidToken().then(() => { updateAuthUI(); return syncAll(false); }).then(autoImportFromSheetOnce).catch(() => { updateAuthUI(); });
     } else if(!spreadsheetId){
       // The persisted token is still valid, so there's nothing to
       // reconnect — but spreadsheetId itself only ever gets resolved as a
@@ -2614,7 +2671,9 @@ function initTokenClientIfReady(){
       // leave "Open Google Sheet" hidden until some other action happened
       // to sync. ensureSpreadsheet() (called inside syncAll) refreshes the
       // UI itself once it resolves.
-      syncAll(false);
+      syncAll(false).then(autoImportFromSheetOnce);
+    } else {
+      autoImportFromSheetOnce();
     }
   }
 }
@@ -3422,6 +3481,7 @@ async function restoreFromSheet(){
   // locally get added, an existing local entry for a date always wins.
   const existingWeightDates = new Set(bodyweightLog.map(e => dateKey(new Date(e.date))));
   let restoredWeightCount = 0;
+  let musclesFilled = 0;
 
   (data.sheets || []).forEach(sheet => {
     const title = sheet.properties.title;
@@ -3502,14 +3562,29 @@ async function restoreFromSheet(){
     }
 
     groups.forEach(g => {
-      if(existingIds.has(g.workoutId)) return;
-
       let rows = g.rows;
       let hh = 12, mm = 0;
       const sepTime = rows[0] && /^—/.test(rows[0][0]) ? parseSeparatorTime(rows[0][0]) : null;
       if(sepTime){ hh = sepTime.hours; mm = sepTime.minutes; rows = rows.slice(1); }
 
       const exercises = isNewFormat ? exercisesFromNewFormatRows(rows) : exercisesFromOldFormatRows(rows);
+
+      if(existingIds.has(g.workoutId)){
+        // Already here — but a workout logged before muscle groups existed
+        // (or without one picked) may have a muscle group in the Sheet that
+        // this device never got. Fill only blanks; never overwrite a group
+        // that's already set locally.
+        const local = history.find(h => (h.mergedIds && h.mergedIds.length ? h.mergedIds : [h.id]).includes(g.workoutId));
+        if(local){
+          exercises.forEach(se => {
+            if(!se.muscle) return;
+            local.exercises.forEach(le => {
+              if(!le.muscle && le.name.trim().toLowerCase() === se.name.trim().toLowerCase()){ le.muscle = se.muscle; musclesFilled++; }
+            });
+          });
+        }
+        return;
+      }
       if(exercises.length === 0) return;
 
       const entryDate = new Date(dateParts.year, dateParts.month, dateParts.day, hh, mm);
@@ -3529,11 +3604,17 @@ async function restoreFromSheet(){
     renderProgress();
     renderAttendance();
   }
+  if(musclesFilled){
+    saveHistory();
+    renderHistory();
+    renderCalendar();
+    renderProgress();
+  }
   if(restoredWeightCount){
     saveBodyweightLog();
     renderBodyweight();
   }
-  return { workouts: restored.length, weights: restoredWeightCount };
+  return { workouts: restored.length, weights: restoredWeightCount, muscles: musclesFilled };
 }
 
 // ---------- Attendance Sheets sync (Weekly Progress / Monthly Progress tabs) ----------
@@ -3696,10 +3777,11 @@ restoreFromSheetBtn.addEventListener('click', async () => {
   const originalText = restoreFromSheetBtn.textContent;
   restoreFromSheetBtn.textContent = 'Restoring…';
   try{
-    const { workouts, weights } = await restoreFromSheet();
+    const { workouts, weights, muscles } = await restoreFromSheet();
     const parts = [];
     if(workouts > 0) parts.push(`${workouts} workout${workouts===1?'':'s'}`);
     if(weights > 0) parts.push(`${weights} weight entr${weights===1?'y':'ies'}`);
+    if(muscles > 0) parts.push(`muscle groups for ${muscles} exercise${muscles===1?'':'s'}`);
     setSyncStatus('ok', parts.length ? `Restored ${parts.join(' and ')} from Sheet.` : 'Nothing new to restore — already up to date.');
     refreshSyncBadge();
   } catch(err){

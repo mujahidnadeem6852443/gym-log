@@ -386,6 +386,9 @@
   .muscle-load{ font-family:var(--mono); color:var(--muted); font-size:12px; flex:1; text-align:right; padding-right:8px; font-variant-numeric:tabular-nums; }
   .muscle-bar-track{ height:8px; border-radius:4px; background:var(--panel-2); overflow:hidden; }
   .muscle-bar-fill{ height:100%; border-radius:4px; }
+  .muscle-import{ margin-top:10px; }
+  .muscle-import .btn-ghost{ width:100%; }
+  .muscle-import-note{ text-align:center; font-size:12px; color:var(--muted); margin-top:6px; }
 
   .progress-summary{ text-align:center; font-size:13px; font-weight:700; margin:12px 0 4px; color:var(--text); }
   .progress-summary .trend-up{ color:var(--green); }
@@ -685,6 +688,10 @@
     </div>
     <div id="muscleSummary" class="progress-summary"></div>
     <div id="muscleList" class="muscle-list"></div>
+    <div class="muscle-import" style="display:none;">
+      <button class="btn-ghost" id="muscleImportBtn" type="button">Import from Google Sheet</button>
+      <div id="muscleImportNote" class="muscle-import-note"></div>
+    </div>
     <div class="progress-legend" id="muscleLegend">
       <span><span class="legend-dot-status improved"></span> Up vs last week</span>
       <span><span class="legend-dot-status stable"></span> Stable</span>
