@@ -1777,7 +1777,6 @@ function trendStatus(curr, prev){
 }
 
 function renderMuscleProgress(){
-  muscleImportBtn.parentElement.style.display = userEmail ? 'block' : 'none';
   if(history.length === 0){
     musclePeriodNav.style.display = 'none';
     muscleLegend.style.display = 'none';
@@ -1856,43 +1855,6 @@ function renderMuscleProgress(){
     row.appendChild(top); row.appendChild(track);
     muscleList.appendChild(row);
   });
-}
-
-const muscleImportBtn = document.getElementById('muscleImportBtn');
-const muscleImportNote = document.getElementById('muscleImportNote');
-
-// Pulls everything from the Google Sheet (additive — same restore as the
-// Settings button): workouts missing here come in, and exercises already
-// here that lost their muscle group get it back from the Sheet.
-async function importMuscleDataFromSheet(){
-  muscleImportBtn.disabled = true;
-  muscleImportBtn.textContent = 'Importing…';
-  muscleImportNote.textContent = '';
-  try{
-    const { workouts, muscles } = await restoreFromSheet();
-    muscleImportNote.textContent = (workouts || muscles)
-      ? `Imported ${workouts} workout${workouts===1?'':'s'}, filled muscle groups for ${muscles} exercise${muscles===1?'':'s'}.`
-      : 'Already up to date with your Google Sheet.';
-    localStorage.setItem('gymlog_sheet_import_' + userEmail, '1');
-  } catch(err){
-    muscleImportNote.textContent = isAuthError(err)
-      ? 'Google session expired — reconnect in Settings, then try again.'
-      : 'Import failed: ' + err.message;
-  } finally {
-    muscleImportBtn.disabled = false;
-    muscleImportBtn.textContent = 'Import from Google Sheet';
-  }
-}
-muscleImportBtn.addEventListener('click', importMuscleDataFromSheet);
-
-// One automatic import per account on first load while signed in, so
-// workouts done before this feature show up without any tapping. Silent on
-// failure — the button above is always there to retry.
-function autoImportFromSheetOnce(){
-  if(!userEmail || localStorage.getItem('gymlog_sheet_import_' + userEmail)) return;
-  restoreFromSheet()
-    .then(() => localStorage.setItem('gymlog_sheet_import_' + userEmail, '1'))
-    .catch(() => {});
 }
 
 musclePeriodPrev.addEventListener('click', () => { musclePageWeek = addDays(musclePageWeek, -7); renderMuscleProgress(); });
@@ -2663,7 +2625,7 @@ function initTokenClientIfReady(){
       // requestAccessToken off a real click, in which case this quietly
       // fails and the "Reconnect" button (still shown by updateAuthUI
       // above) is the fallback.
-      getValidToken().then(() => { updateAuthUI(); return syncAll(false); }).then(autoImportFromSheetOnce).catch(() => { updateAuthUI(); });
+      getValidToken().then(() => { updateAuthUI(); return syncAll(false); }).then(ingestFromSheetQuietly).catch(() => { updateAuthUI(); });
     } else if(!spreadsheetId){
       // The persisted token is still valid, so there's nothing to
       // reconnect — but spreadsheetId itself only ever gets resolved as a
@@ -2671,9 +2633,9 @@ function initTokenClientIfReady(){
       // leave "Open Google Sheet" hidden until some other action happened
       // to sync. ensureSpreadsheet() (called inside syncAll) refreshes the
       // UI itself once it resolves.
-      syncAll(false).then(autoImportFromSheetOnce);
+      syncAll(false).then(ingestFromSheetQuietly);
     } else {
-      autoImportFromSheetOnce();
+      ingestFromSheetQuietly();
     }
   }
 }
@@ -2768,7 +2730,7 @@ async function afterSignIn(){
     // whatever was active before (or merging it in, if it was unclaimed
     // local-only data) so this account's view can never end up mixed with
     // a different one's. See switchActiveIdentity for the exact rules.
-    const wasSwitch = switchActiveIdentity(newEmail);
+    switchActiveIdentity(newEmail);
     userEmail = newEmail;
     userPicture = info.picture || null;
     localStorage.setItem(K_LAST_EMAIL, userEmail);
@@ -2813,16 +2775,13 @@ async function afterSignIn(){
       syncWeightUnitToSheet(accessToken).catch(() => {});
     }
 
-    if(wasSwitch){
-      // A different identity is now active (a different account, or this
-      // device's local-only data was just claimed by an account for the
-      // first time) — automatically pull in whatever's already on that
-      // account's Sheet and show it. No confirmation step: the merge here
-      // is always additive (matches by workout id), never destructive.
-      setSyncStatus('ok', 'Fetching your data…');
-      const count = await restoreFromSheet();
-      setSyncStatus('ok', count > 0 ? `Loaded ${count} workout${count===1?'':'s'} from your Sheet.` : 'Signed in — up to date.');
-    }
+    // Always pull in whatever's already on this account's Sheet and show it
+    // — not just on an account switch, so every sign-in lands on the full,
+    // current picture. No confirmation step: the merge is additive (matches
+    // by workout id / weight date), never destructive.
+    setSyncStatus('ok', 'Fetching your data…');
+    const restoredSummary = describeRestore(await restoreFromSheet());
+    setSyncStatus('ok', restoredSummary ? `Loaded ${restoredSummary} from your Sheet.` : 'Signed in — up to date.');
 
     await flushStalePendingDeletes();
     await syncAll(false);
@@ -3449,6 +3408,28 @@ function exercisesFromNewFormatRows(rows){
   return exercises;
 }
 
+// Human-readable summary of what a restore changed, shared by the sign-in
+// flow and the Settings restore button.
+function describeRestore(r){
+  const parts = [];
+  if(r.workouts > 0) parts.push(`${r.workouts} workout${r.workouts===1?'':'s'}`);
+  if(r.weights > 0) parts.push(`${r.weights} weight entr${r.weights===1?'y':'ies'}`);
+  if(r.muscles > 0) parts.push(`muscle groups for ${r.muscles} exercise${r.muscles===1?'':'s'}`);
+  return parts.length > 1 ? parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1] : (parts[0] || '');
+}
+
+// Every feature (History, Calendar, Progress, Muscle groups, Attendance,
+// Body Weight) is derived from the same local data, and the Sheet is the
+// backup of that data — so whenever the app opens signed in, quietly pull
+// anything the Sheet has that this device doesn't. Additive only (same
+// rules as Restore), silent on failure, never more than one at a time.
+let sheetIngestInFlight = false;
+function ingestFromSheetQuietly(){
+  if(!userEmail || sheetIngestInFlight) return Promise.resolve();
+  sheetIngestInFlight = true;
+  return restoreFromSheet().catch(() => {}).finally(() => { sheetIngestInFlight = false; });
+}
+
 // Rebuilds local workout entries from whatever is currently sitting in the
 // Sheet, using the same "wk:<id>" row notes that power remote delete to
 // regroup rows back into distinct workouts — so a wiped phone or a brand
@@ -3777,12 +3758,8 @@ restoreFromSheetBtn.addEventListener('click', async () => {
   const originalText = restoreFromSheetBtn.textContent;
   restoreFromSheetBtn.textContent = 'Restoring…';
   try{
-    const { workouts, weights, muscles } = await restoreFromSheet();
-    const parts = [];
-    if(workouts > 0) parts.push(`${workouts} workout${workouts===1?'':'s'}`);
-    if(weights > 0) parts.push(`${weights} weight entr${weights===1?'y':'ies'}`);
-    if(muscles > 0) parts.push(`muscle groups for ${muscles} exercise${muscles===1?'':'s'}`);
-    setSyncStatus('ok', parts.length ? `Restored ${parts.join(' and ')} from Sheet.` : 'Nothing new to restore — already up to date.');
+    const summary = describeRestore(await restoreFromSheet());
+    setSyncStatus('ok', summary ? `Restored ${summary} from Sheet.` : 'Nothing new to restore — already up to date.');
     refreshSyncBadge();
   } catch(err){
     setSyncStatus('err', isAuthError(err)
