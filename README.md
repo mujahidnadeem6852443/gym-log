@@ -263,12 +263,15 @@ from your history, so there's nothing extra to sync.
   then the remembered-exercise list) — so a "Curl" logged without a group
   still counts under Biceps once any other "Curl" has one. Nothing stored is
   changed by this.
-- When signed in, an **Import from Google Sheet** button on the card pulls
-  everything from your Sheet (the same additive restore as in Settings):
-  workouts missing from this device come in, and workouts already here that
-  are missing a muscle group get it from the Sheet. It never overwrites a
-  group that's already set on this device. This also runs once automatically
-  per account the first time the app opens signed in.
+- **It reads from your Google Sheet automatically.** There's no import
+  button: whenever the app opens signed in (and on every sign-in), it quietly
+  pulls in whatever your Sheet has that this device doesn't — workouts,
+  body weight entries, and muscle groups missing on workouts already here.
+  It's the same additive restore as in Settings, so it never overwrites
+  anything already saved on this device (including a muscle group you've
+  already set). Because History, Calendar, Progress, Muscle groups,
+  Attendance and Body Weight are all drawn from that same data, they all
+  fill in together.
 
 ### 📅 Attendance Progress
 
